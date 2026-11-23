@@ -71,14 +71,22 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
         // The message is a fixed whitelist string, so enum names or class names never leak.
         log.debug("Request rejected with status {}: {}", statusCode.value(), ex.getMessage());
 
-        if (statusCode.value() == HttpStatus.NOT_FOUND.value()) {
+        int status = statusCode.value();
+        if (status == HttpStatus.NOT_FOUND.value()) {
             return build(HttpStatus.NOT_FOUND, "NOT_FOUND", "resource not found");
+        }
+        if (status == HttpStatus.METHOD_NOT_ALLOWED.value()) {
+            return build(HttpStatus.METHOD_NOT_ALLOWED, "METHOD_NOT_ALLOWED", "HTTP method is not supported here");
+        }
+        if (status == HttpStatus.UNSUPPORTED_MEDIA_TYPE.value()) {
+            return build(HttpStatus.UNSUPPORTED_MEDIA_TYPE, "UNSUPPORTED_MEDIA_TYPE",
+                    "Content-Type must be application/json");
         }
         if (ex instanceof HttpMessageNotReadableException) {
             return build(HttpStatus.BAD_REQUEST, "MALFORMED_BODY",
                     "request body is malformed or has an unknown value");
         }
-        return build(HttpStatus.valueOf(statusCode.value()), "BAD_REQUEST", "request could not be processed");
+        return build(HttpStatus.valueOf(status), "BAD_REQUEST", "request could not be processed");
     }
 
     private ResponseEntity<Object> build(HttpStatus status, String code, String message) {

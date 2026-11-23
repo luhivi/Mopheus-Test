@@ -122,6 +122,15 @@ class TaskApiTest {
                 .andExpect(status().isNotFound());
     }
 
+    @Test
+    void rejectsUnsupportedMediaTypeWithoutBecoming500() throws Exception {
+        mockMvc.perform(post("/api/tasks")
+                        .contentType(MediaType.TEXT_PLAIN)
+                        .content("plain text is not json"))
+                .andExpect(status().isUnsupportedMediaType())
+                .andExpect(jsonPath("$.code").value("UNSUPPORTED_MEDIA_TYPE"));
+    }
+
     private long createTask(String title) throws Exception {
         String body = mockMvc.perform(post("/api/tasks")
                         .contentType(MediaType.APPLICATION_JSON)

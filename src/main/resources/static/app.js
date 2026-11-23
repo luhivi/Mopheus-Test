@@ -1,6 +1,7 @@
 'use strict';
 
 const API_BASE = '/api/tasks';
+const REQUEST_TIMEOUT_MS = 8000;
 const STATUS_FLOW = ['TODO', 'DOING', 'DONE'];
 const STATUS_LABELS = { TODO: '待办', DOING: '进行中', DONE: '已完成' };
 
@@ -40,7 +41,21 @@ function nextStatus(current) {
 }
 
 async function request(url, options) {
-    const response = await fetch(url, options);
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+    let response;
+    try {
+        response = await fetch(url, Object.assign({ signal: controller.signal }, options));
+    } catch (error) {
+        if (error.name === 'AbortError') {
+            throw new Error('请求超时，请稍后重试');
+        }
+        throw new Error('无法连接服务端');
+    } finally {
+        window.clearTimeout(timer);
+    }
+
     if (response.status === 204) {
         return null;
     }
@@ -144,9 +159,15 @@ async function createTask(title) {
 async function advanceTask(item) {
     const badge = item.querySelector('.badge');
     const id = item.dataset.id;
-    const target = nextStatus(badge.dataset.status);
+    const actionButton = item.querySelector('[data-action="advance"]');
 
-    item.querySelectorAll('button').forEach((button) => {
+    if (actionButton.disabled) {
+        return;
+    }
+
+    const target = nextStatus(badge.dataset.status);
+    const buttons = item.querySelectorAll('button');
+    buttons.forEach((button) => {
         button.disabled = true;
     });
 
@@ -163,9 +184,13 @@ async function advanceTask(item) {
         await loadTasks();
     } catch (error) {
         setHint(`更新状态失败：${error.message}`, 'error');
-        item.querySelectorAll('button').forEach((button) => {
+        buttons.forEach((button) => {
             button.disabled = false;
         });
+        // Re-apply the DONE guard: a row that was already complete must stay non-clickable.
+        if (badge.dataset.status === STATUS_FLOW[STATUS_FLOW.length - 1]) {
+            actionButton.disabled = true;
+        }
     }
 }
 
