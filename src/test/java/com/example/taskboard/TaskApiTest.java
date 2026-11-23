@@ -131,6 +131,14 @@ class TaskApiTest {
                 .andExpect(jsonPath("$.code").value("UNSUPPORTED_MEDIA_TYPE"));
     }
 
+    @Test
+    void returnsJsonInsteadOfWhitelabelWhenHtmlIsRequested() throws Exception {
+        mockMvc.perform(get("/api/tasks").accept(MediaType.TEXT_HTML))
+                .andExpect(status().isNotAcceptable())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+                .andExpect(jsonPath("$.code").value("NOT_ACCEPTABLE"));
+    }
+
     private long createTask(String title) throws Exception {
         String body = mockMvc.perform(post("/api/tasks")
                         .contentType(MediaType.APPLICATION_JSON)
