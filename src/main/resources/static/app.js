@@ -99,6 +99,7 @@ function renderTask(task) {
 
     node.dataset.id = String(task.id);
     node.querySelector('.task__title').textContent = task.title;
+    node.classList.toggle('task--done', task.status === STATUS_FLOW[STATUS_FLOW.length - 1]);
 
     const badge = node.querySelector('.badge');
     badge.textContent = STATUS_LABELS[task.status] || task.status;
@@ -144,6 +145,7 @@ async function loadTasks() {
 
 async function createTask(title) {
     els.submit.disabled = true;
+    els.submit.setAttribute('aria-busy', 'true');
     setHint('正在提交…');
     try {
         await request(API_BASE, {
@@ -161,6 +163,7 @@ async function createTask(title) {
         setHint(`添加失败：${error.message}`, 'error');
     } finally {
         els.submit.disabled = false;
+        els.submit.removeAttribute('aria-busy');
     }
 }
 
@@ -180,6 +183,7 @@ async function advanceTask(item) {
     const buttons = item.querySelectorAll('button');
     buttons.forEach((button) => {
         button.disabled = true;
+        button.setAttribute('aria-busy', 'true');
     });
 
     try {
@@ -198,6 +202,7 @@ async function advanceTask(item) {
         delete item.dataset.busy;
         buttons.forEach((button) => {
             button.disabled = false;
+            button.removeAttribute('aria-busy');
         });
         // Re-apply the DONE guard: a row that was already complete must stay non-clickable.
         if (badge.dataset.status === STATUS_FLOW[STATUS_FLOW.length - 1]) {
@@ -218,6 +223,7 @@ async function deleteTask(item) {
 
     item.querySelectorAll('button').forEach((button) => {
         button.disabled = true;
+        button.setAttribute('aria-busy', 'true');
     });
 
     try {
@@ -229,6 +235,7 @@ async function deleteTask(item) {
         delete item.dataset.busy;
         item.querySelectorAll('button').forEach((button) => {
             button.disabled = false;
+            button.removeAttribute('aria-busy');
         });
         // Same guard as advanceTask: a row that is already DONE must keep "推进" disabled,
         // otherwise a failed delete hands the user a button that sends a pointless PATCH.

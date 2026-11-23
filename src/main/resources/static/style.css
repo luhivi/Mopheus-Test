@@ -110,6 +110,11 @@ body {
 
 .button:disabled {
     opacity: 0.55;
+    cursor: not-allowed;
+}
+
+/* Only a button that is actually waiting on the network shows a spinner cursor. */
+.button[aria-busy="true"]:disabled {
     cursor: progress;
 }
 
@@ -213,6 +218,11 @@ body {
 .task__actions {
     display: flex;
     gap: 6px;
+}
+
+.task--done .task__title {
+    color: var(--muted);
+    text-decoration: line-through;
 }
 
 @media (prefers-reduced-motion: no-preference) {
