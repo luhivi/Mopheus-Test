@@ -101,18 +101,18 @@ public class TaskService {
 
     public Task updateStatus(long id, TaskStatus target) {
         Instant now = Instant.now(clock);
-        Task[] previous = new Task[1];
+        // Throwing inside compute is safe: ConcurrentHashMap documents that a remapping function
+        // which throws leaves the mapping unchanged, so there is no half-updated state to guard
+        // against and no need to smuggle the previous value out through a holder.
         Task updated = tasks.compute(id, (key, current) -> {
             if (current == null) {
                 return null;
             }
-            previous[0] = current;
             if (!current.status().canMoveTo(target)) {
-                // Returning the current value keeps the entry untouched; the exception is thrown
-                // after compute exits so the map is never left in a half-updated state.
-                return current;
+                throw new InvalidTaskTransitionException(id, current.status().name(), String.valueOf(target));
             }
             if (current.status() == target) {
+                // Idempotent no-op: keep the entry as is, including updatedAt.
                 return current;
             }
             return new Task(current.id(), current.title(), target, current.priority(), current.assignee(),
@@ -120,9 +120,6 @@ public class TaskService {
         });
         if (updated == null) {
             throw new TaskNotFoundException(id);
-        }
-        if (previous[0] != null && !previous[0].status().canMoveTo(target)) {
-            throw new InvalidTaskTransitionException(id, previous[0].status().name(), String.valueOf(target));
         }
         return updated;
     }
