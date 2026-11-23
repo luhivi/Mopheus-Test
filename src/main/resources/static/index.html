@@ -3,60 +3,177 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>任务板 · Taskboard</title>
+    <title>任务看板 · Taskboard</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <main class="app">
     <header class="app__header">
-        <h1 class="app__title">任务板</h1>
-        <p class="app__subtitle">原生 HTML / CSS / JavaScript 示例，数据保存在服务端内存中。</p>
+        <div class="app__heading">
+            <h1 class="app__title">任务看板</h1>
+            <p class="app__subtitle">原生 HTML / CSS / JavaScript 示例，任务保存在服务端内存中。</p>
+        </div>
+        <div class="stats" id="stats" aria-live="polite">
+            <span class="stats__item"><span class="stats__value" id="stat-total">–</span><span class="stats__label">总数</span></span>
+            <span class="stats__item"><span class="stats__value" id="stat-todo">–</span><span class="stats__label">待办</span></span>
+            <span class="stats__item"><span class="stats__value" id="stat-doing">–</span><span class="stats__label">进行中</span></span>
+            <span class="stats__item"><span class="stats__value" id="stat-blocked">–</span><span class="stats__label">阻塞</span></span>
+            <span class="stats__item"><span class="stats__value" id="stat-done">–</span><span class="stats__label">已完成</span></span>
+            <span class="stats__item stats__item--danger"><span class="stats__value" id="stat-overdue">–</span><span class="stats__label">逾期</span></span>
+        </div>
     </header>
 
-    <form class="composer" id="task-form" novalidate>
-        <label class="composer__label" for="task-title">新任务</label>
-        <div class="composer__row">
-            <input
-                    class="composer__input"
-                    id="task-title"
-                    name="title"
-                    type="text"
-                    maxlength="80"
-                    autocomplete="off"
-                    placeholder="例如：补齐接口文档"
-                    aria-describedby="composer-hint">
-            <button class="button button--primary" type="submit">添加</button>
-        </div>
-        <p class="composer__hint" id="composer-hint" role="status" aria-live="polite"></p>
+    <form class="composer" id="quick-form" novalidate>
+        <label class="visually-hidden" for="quick-title">新任务标题</label>
+        <input class="composer__input" id="quick-title" name="title" type="text" maxlength="80"
+               autocomplete="off" placeholder="输入任务标题，按回车快速添加">
+        <button class="button button--primary" type="submit" id="quick-submit">添加</button>
+        <button class="button" type="button" id="open-dialog-button">详细新建</button>
     </form>
+    <p class="hint" id="hint" role="status" aria-live="polite"></p>
 
-    <section class="board" aria-labelledby="board-heading">
-        <h2 class="board__heading" id="board-heading">当前任务</h2>
+    <section class="toolbar" aria-label="筛选与排序">
+        <label class="field">
+            <span class="field__label">搜索</span>
+            <input class="field__control" type="search" id="filter-q" placeholder="标题或标签">
+        </label>
+        <label class="field">
+            <span class="field__label">状态</span>
+            <select class="field__control" id="filter-status">
+                <option value="">全部</option>
+                <option value="TODO">待办</option>
+                <option value="DOING">进行中</option>
+                <option value="BLOCKED">阻塞</option>
+                <option value="DONE">已完成</option>
+            </select>
+        </label>
+        <label class="field">
+            <span class="field__label">优先级</span>
+            <select class="field__control" id="filter-priority">
+                <option value="">全部</option>
+                <option value="LOW">低</option>
+                <option value="NORMAL">普通</option>
+                <option value="HIGH">高</option>
+                <option value="URGENT">紧急</option>
+            </select>
+        </label>
+        <label class="field field--check">
+            <input type="checkbox" id="filter-overdue">
+            <span class="field__label">只看逾期</span>
+        </label>
+        <label class="field">
+            <span class="field__label">排序</span>
+            <select class="field__control" id="sort-key">
+                <option value="createdAt">创建时间</option>
+                <option value="dueDate">截止日期</option>
+                <option value="priority">优先级</option>
+            </select>
+        </label>
+        <button class="button button--small" type="button" id="sort-order" aria-pressed="false">降序</button>
+        <button class="button button--small" type="button" id="filter-reset">重置</button>
+    </section>
 
-        <p class="state state--loading" id="state-loading" role="status">正在加载…</p>
-        <p class="state state--empty" id="state-empty" hidden>还没有任务，先添加一条。</p>
+    <p class="hint hint--count" id="filter-count"></p>
 
-        <div class="state state--error" id="state-error" hidden>
-            <p id="state-error-message">加载失败。</p>
-            <button class="button" type="button" id="retry-button">重试</button>
-        </div>
+    <p class="state state--loading" id="state-loading" role="status">正在加载…</p>
+    <p class="state state--empty" id="state-empty" hidden>没有符合条件的任务。</p>
+    <div class="state state--error" id="state-error" hidden>
+        <p id="state-error-message">加载失败。</p>
+        <button class="button" type="button" id="retry-button">重试</button>
+    </div>
 
-        <ul class="task-list" id="task-list" hidden></ul>
+    <section class="board" id="board" aria-label="任务看板" hidden>
+        <section class="column" data-status="TODO">
+            <header class="column__header"><h2 class="column__title">待办</h2><span class="column__count" data-count="TODO">0</span></header>
+            <div class="column__body" data-drop="TODO"></div>
+        </section>
+        <section class="column" data-status="DOING">
+            <header class="column__header"><h2 class="column__title">进行中</h2><span class="column__count" data-count="DOING">0</span></header>
+            <div class="column__body" data-drop="DOING"></div>
+        </section>
+        <section class="column" data-status="BLOCKED">
+            <header class="column__header"><h2 class="column__title">阻塞</h2><span class="column__count" data-count="BLOCKED">0</span></header>
+            <div class="column__body" data-drop="BLOCKED"></div>
+        </section>
+        <section class="column" data-status="DONE">
+            <header class="column__header"><h2 class="column__title">已完成</h2><span class="column__count" data-count="DONE">0</span></header>
+            <div class="column__body" data-drop="DONE"></div>
+        </section>
     </section>
 </main>
 
-<template id="task-item-template">
-    <li class="task">
-        <span class="task__title"></span>
-        <span class="task__meta">
-            <span class="badge"></span>
-            <time class="task__time"></time>
-        </span>
-        <span class="task__actions">
-            <button class="button button--small" type="button" data-action="advance">推进</button>
-            <button class="button button--small button--danger" type="button" data-action="delete">删除</button>
-        </span>
-    </li>
+<dialog class="dialog" id="task-dialog">
+    <form class="dialog__form" id="task-form" novalidate>
+        <h2 class="dialog__title" id="dialog-title">新建任务</h2>
+        <input type="hidden" id="form-id">
+
+        <label class="field field--stack">
+            <span class="field__label">标题</span>
+            <input class="field__control" type="text" id="form-title" maxlength="80" required>
+        </label>
+
+        <div class="dialog__row">
+            <label class="field field--stack">
+                <span class="field__label">优先级</span>
+                <select class="field__control" id="form-priority">
+                    <option value="LOW">低</option>
+                    <option value="NORMAL" selected>普通</option>
+                    <option value="HIGH">高</option>
+                    <option value="URGENT">紧急</option>
+                </select>
+            </label>
+            <label class="field field--stack">
+                <span class="field__label">负责人</span>
+                <input class="field__control" type="text" id="form-assignee" maxlength="40" placeholder="可留空">
+            </label>
+        </div>
+
+        <div class="dialog__row">
+            <label class="field field--stack">
+                <span class="field__label">截止日期</span>
+                <input class="field__control" type="date" id="form-due">
+            </label>
+            <label class="field field--stack" id="form-status-field">
+                <span class="field__label">初始状态</span>
+                <select class="field__control" id="form-status">
+                    <option value="TODO" selected>待办</option>
+                    <option value="DOING">进行中</option>
+                    <option value="BLOCKED">阻塞</option>
+                </select>
+            </label>
+        </div>
+
+        <label class="field field--stack">
+            <span class="field__label">标签（逗号分隔，最多 5 个）</span>
+            <input class="field__control" type="text" id="form-tags" placeholder="例如：前端, 紧急修复">
+        </label>
+
+        <p class="hint" id="form-hint" role="status" aria-live="polite"></p>
+
+        <div class="dialog__actions">
+            <button class="button" type="button" id="form-cancel">取消</button>
+            <button class="button button--primary" type="submit" id="form-submit">保存</button>
+        </div>
+    </form>
+</dialog>
+
+<template id="task-card-template">
+    <article class="card">
+        <span class="card__priority" aria-hidden="true"></span>
+        <div class="card__main">
+            <h3 class="card__title"></h3>
+            <p class="card__meta">
+                <span class="card__assignee"></span>
+                <span class="card__due"></span>
+            </p>
+            <ul class="card__tags"></ul>
+        </div>
+        <div class="card__actions">
+            <button class="button button--tiny" type="button" data-action="edit">编辑</button>
+            <button class="button button--tiny" type="button" data-action="advance">推进</button>
+            <button class="button button--tiny button--danger" type="button" data-action="delete">删除</button>
+        </div>
+    </article>
 </template>
 
 <script src="app.js"></script>

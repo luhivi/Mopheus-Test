@@ -1,5 +1,6 @@
 package com.example.taskboard.web;
 
+import com.example.taskboard.service.InvalidTaskTransitionException;
 import com.example.taskboard.service.TaskNotFoundException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -14,6 +15,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.WebRequest;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExceptionHandler;
 
 import java.time.Instant;
@@ -37,6 +39,27 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
     @ExceptionHandler(TaskNotFoundException.class)
     public ResponseEntity<Object> handleTaskNotFound(TaskNotFoundException ex) {
         return build(HttpStatus.NOT_FOUND, "TASK_NOT_FOUND", ex.getMessage());
+    }
+
+    @ExceptionHandler(InvalidTaskTransitionException.class)
+    public ResponseEntity<Object> handleInvalidTransition(InvalidTaskTransitionException ex) {
+        // 409 rather than 400: the request itself is well formed and the target status exists.
+        // The conflict is with the resource's current state, which is exactly what 409 means.
+        return build(HttpStatus.CONFLICT, "INVALID_TRANSITION",
+                "task cannot move from " + ex.from() + " to " + ex.to());
+    }
+
+    @ExceptionHandler(MalformedQueryException.class)
+    public ResponseEntity<Object> handleMalformedQuery(MalformedQueryException ex) {
+        return build(HttpStatus.BAD_REQUEST, "MALFORMED_QUERY", ex.getMessage());
+    }
+
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<Object> handleTypeMismatch(MethodArgumentTypeMismatchException ex) {
+        // `?overdue=maybe` reaches here: the value cannot be turned into a boolean. Without this
+        // it would fall into the catch-all and become a 500, which falsely signals a server fault.
+        return build(HttpStatus.BAD_REQUEST, "MALFORMED_QUERY",
+                "query parameter '" + ex.getName() + "' has an unsupported value");
     }
 
     @Override

@@ -35,8 +35,26 @@ class TaskApiTest {
 
         mockMvc.perform(get("/api/tasks"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$[0].title").exists())
-                .andExpect(jsonPath("$[0].status").value("TODO"));
+                .andExpect(jsonPath("$[?(@.title == 'write the sample ticket')]").exists())
+                .andExpect(jsonPath("$[0].status").value("TODO"))
+                .andExpect(jsonPath("$[0].priority").value("NORMAL"))
+                .andExpect(jsonPath("$[0].tags").isArray());
+    }
+
+    @Test
+    void createsTaskWithAllFields() throws Exception {
+        String body = """
+                {"title":"full task","priority":"URGENT","assignee":"  alice  ",
+                 "dueDate":"2099-12-31","tags":["b","a","b"]}
+                """;
+
+        mockMvc.perform(post("/api/tasks").contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.priority").value("URGENT"))
+                .andExpect(jsonPath("$.assignee").value("alice"))
+                .andExpect(jsonPath("$.dueDate").value("2099-12-31"))
+                .andExpect(jsonPath("$.tags.length()").value(2))
+                .andExpect(jsonPath("$.updatedAt").exists());
     }
 
     @Test
@@ -51,11 +69,24 @@ class TaskApiTest {
 
     @Test
     void rejectsOversizedTitle() throws Exception {
-        String title = "x".repeat(81);
+        mockMvc.perform(post("/api/tasks")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(new TitlePayload("x".repeat(81)))))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+    }
+
+    @Test
+    void rejectsTooManyTagsAndOversizedTag() throws Exception {
+        mockMvc.perform(post("/api/tasks")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"t\",\"tags\":[\"1\",\"2\",\"3\",\"4\",\"5\",\"6\"]}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
 
         mockMvc.perform(post("/api/tasks")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new TitlePayload(title))))
+                        .content("{\"title\":\"t\",\"tags\":[\"" + "x".repeat(21) + "\"]}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
     }
@@ -67,6 +98,11 @@ class TaskApiTest {
         mockMvc.perform(patch("/api/tasks/" + id + "/status")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"status\":\"BLOCKED\"}"))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(patch("/api/tasks/" + id + "/status")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"status\":\"NOPE\"}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("MALFORMED_BODY"))
                 .andExpect(content().string(org.hamcrest.Matchers.not(
@@ -84,6 +120,127 @@ class TaskApiTest {
                 .andExpect(jsonPath("$.id").value(id))
                 .andExpect(jsonPath("$.title").value("move me"))
                 .andExpect(jsonPath("$.status").value("DONE"));
+    }
+
+    @Test
+    void rejectsTransitionOutOfDoneWith409() throws Exception {
+        long id = createTask("finish me");
+        mockMvc.perform(patch("/api/tasks/" + id + "/status")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"status\":\"DONE\"}"))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(patch("/api/tasks/" + id + "/status")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"status\":\"TODO\"}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("INVALID_TRANSITION"));
+
+        mockMvc.perform(get("/api/tasks/" + id))
+                .andExpect(jsonPath("$.status").value("DONE"));
+    }
+
+    @Test
+    void repeatedStatusUpdateIsIdempotent() throws Exception {
+        long id = createTask("keep");
+
+        mockMvc.perform(patch("/api/tasks/" + id + "/status")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"status\":\"TODO\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("TODO"));
+    }
+
+    @Test
+    void returnsTaskDetailAnd404() throws Exception {
+        long id = createTask("detail");
+
+        mockMvc.perform(get("/api/tasks/" + id))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.title").value("detail"));
+
+        mockMvc.perform(get("/api/tasks/999999"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("TASK_NOT_FOUND"));
+    }
+
+    @Test
+    void updatesEditableFieldsWithoutTouchingStatus() throws Exception {
+        long id = createTask("before");
+        mockMvc.perform(patch("/api/tasks/" + id + "/status")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"status\":\"DOING\"}"))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(put("/api/tasks/" + id)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"after\",\"priority\":\"HIGH\",\"assignee\":\"bob\",\"tags\":[\"z\"]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.title").value("after"))
+                .andExpect(jsonPath("$.priority").value("HIGH"))
+                .andExpect(jsonPath("$.assignee").value("bob"))
+                .andExpect(jsonPath("$.status").value("DOING"))
+                .andExpect(jsonPath("$.tags[0]").value("z"));
+    }
+
+    @Test
+    void updateReturns404ForMissingTask() throws Exception {
+        mockMvc.perform(put("/api/tasks/999999")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"x\"}"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("TASK_NOT_FOUND"));
+    }
+
+    @Test
+    void statsIsRoutedBeforeIdAndCountsEverything() throws Exception {
+        long overdueId = createTaskWith("overdue", "2099-01-01");
+        mockMvc.perform(put("/api/tasks/" + overdueId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"overdue\",\"dueDate\":\"2020-01-01\"}"))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get("/api/tasks/stats"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.total").isNumber())
+                .andExpect(jsonPath("$.overdue").isNumber())
+                .andExpect(jsonPath("$.byStatus.TODO").isNumber())
+                .andExpect(jsonPath("$.byStatus.DONE").isNumber())
+                .andExpect(jsonPath("$.byPriority.URGENT").isNumber());
+    }
+
+    @Test
+    void filtersAndSortsThroughQueryParameters() throws Exception {
+        createTaskWith("alpha", null);
+        long beta = createTaskWith("beta", null);
+        mockMvc.perform(patch("/api/tasks/" + beta + "/status")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"status\":\"DONE\"}"))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(get("/api/tasks").param("status", "DONE"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].title").value("beta"));
+
+        mockMvc.perform(get("/api/tasks").param("q", "alph"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].title").value("alpha"));
+
+        mockMvc.perform(get("/api/tasks").param("sort", "priority").param("order", "asc"))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void rejectsUnknownQueryParameterValueWith400() throws Exception {
+        mockMvc.perform(get("/api/tasks").param("status", "NOPE"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("MALFORMED_QUERY"));
+
+        mockMvc.perform(get("/api/tasks").param("sort", "whatever"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("MALFORMED_QUERY"));
     }
 
     @Test
@@ -182,9 +339,13 @@ class TaskApiTest {
     }
 
     private long createTask(String title) throws Exception {
+        return createTaskWith(title, null);
+    }
+
+    private long createTaskWith(String title, String dueDate) throws Exception {
         String body = mockMvc.perform(post("/api/tasks")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(new TitlePayload(title))))
+                        .content(objectMapper.writeValueAsString(new CreatePayload(title, dueDate))))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.status").value("TODO"))
                 .andReturn()
@@ -195,5 +356,8 @@ class TaskApiTest {
     }
 
     private record TitlePayload(String title) {
+    }
+
+    private record CreatePayload(String title, String dueDate) {
     }
 }
