@@ -1,0 +1,232 @@
+'use strict';
+
+const API_BASE = '/api/tasks';
+const STATUS_FLOW = ['TODO', 'DOING', 'DONE'];
+const STATUS_LABELS = { TODO: '待办', DOING: '进行中', DONE: '已完成' };
+
+const els = {
+    form: document.getElementById('task-form'),
+    input: document.getElementById('task-title'),
+    hint: document.getElementById('composer-hint'),
+    submit: document.querySelector('#task-form button[type="submit"]'),
+    loading: document.getElementById('state-loading'),
+    empty: document.getElementById('state-empty'),
+    error: document.getElementById('state-error'),
+    errorMessage: document.getElementById('state-error-message'),
+    retry: document.getElementById('retry-button'),
+    list: document.getElementById('task-list'),
+    template: document.getElementById('task-item-template'),
+};
+
+function setHint(text, tone) {
+    els.hint.textContent = text;
+    if (tone) {
+        els.hint.dataset.tone = tone;
+    } else {
+        delete els.hint.dataset.tone;
+    }
+}
+
+function showState(name) {
+    els.loading.hidden = name !== 'loading';
+    els.empty.hidden = name !== 'empty';
+    els.error.hidden = name !== 'error';
+    els.list.hidden = name !== 'list';
+}
+
+function nextStatus(current) {
+    const index = STATUS_FLOW.indexOf(current);
+    return STATUS_FLOW[Math.min(index + 1, STATUS_FLOW.length - 1)];
+}
+
+async function request(url, options) {
+    const response = await fetch(url, options);
+    if (response.status === 204) {
+        return null;
+    }
+
+    let payload = null;
+    try {
+        payload = await response.json();
+    } catch (error) {
+        payload = null;
+    }
+
+    if (!response.ok) {
+        const message = payload && typeof payload.message === 'string'
+            ? payload.message
+            : `请求失败（HTTP ${response.status}）`;
+        throw new Error(message);
+    }
+    return payload;
+}
+
+function renderTasks(tasks) {
+    els.list.replaceChildren();
+
+    if (tasks.length === 0) {
+        showState('empty');
+        return;
+    }
+
+    const fragment = document.createDocumentFragment();
+    for (const task of tasks) {
+        fragment.appendChild(renderTask(task));
+    }
+    els.list.appendChild(fragment);
+    showState('list');
+}
+
+function renderTask(task) {
+    const node = els.template.content.firstElementChild.cloneNode(true);
+
+    node.dataset.id = String(task.id);
+    node.querySelector('.task__title').textContent = task.title;
+
+    const badge = node.querySelector('.badge');
+    badge.textContent = STATUS_LABELS[task.status] || task.status;
+    badge.dataset.status = task.status;
+
+    const time = node.querySelector('.task__time');
+    time.dateTime = task.createdAt;
+    time.textContent = formatTime(task.createdAt);
+
+    const advanceButton = node.querySelector('[data-action="advance"]');
+    const isLast = task.status === STATUS_FLOW[STATUS_FLOW.length - 1];
+    advanceButton.disabled = isLast;
+    advanceButton.title = isLast ? '已完成，无需推进' : `推进到 ${STATUS_LABELS[nextStatus(task.status)]}`;
+
+    return node;
+}
+
+function formatTime(iso) {
+    const date = new Date(iso);
+    if (Number.isNaN(date.getTime())) {
+        return '';
+    }
+    return date.toLocaleString('zh-CN', { hour12: false });
+}
+
+async function loadTasks() {
+    showState('loading');
+    setHint('');
+    try {
+        const tasks = await request(API_BASE, { headers: { Accept: 'application/json' } });
+        renderTasks(Array.isArray(tasks) ? tasks : []);
+    } catch (error) {
+        els.errorMessage.textContent = `加载任务失败：${error.message}`;
+        showState('error');
+    }
+}
+
+async function createTask(title) {
+    els.submit.disabled = true;
+    setHint('正在提交…');
+    try {
+        await request(API_BASE, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                Accept: 'application/json',
+            },
+            body: JSON.stringify({ title }),
+        });
+        els.input.value = '';
+        setHint('已添加。');
+        await loadTasks();
+    } catch (error) {
+        setHint(`添加失败：${error.message}`, 'error');
+    } finally {
+        els.submit.disabled = false;
+    }
+}
+
+async function advanceTask(item) {
+    const badge = item.querySelector('.badge');
+    const id = item.dataset.id;
+    const target = nextStatus(badge.dataset.status);
+
+    item.querySelectorAll('button').forEach((button) => {
+        button.disabled = true;
+    });
+
+    try {
+        await request(`${API_BASE}/${encodeURIComponent(id)}/status`, {
+            method: 'PATCH',
+            headers: {
+                'Content-Type': 'application/json',
+                Accept: 'application/json',
+            },
+            body: JSON.stringify({ status: target }),
+        });
+        setHint('');
+        await loadTasks();
+    } catch (error) {
+        setHint(`更新状态失败：${error.message}`, 'error');
+        item.querySelectorAll('button').forEach((button) => {
+            button.disabled = false;
+        });
+    }
+}
+
+async function deleteTask(item) {
+    const id = item.dataset.id;
+    if (!window.confirm('确定删除这条任务？')) {
+        return;
+    }
+
+    item.querySelectorAll('button').forEach((button) => {
+        button.disabled = true;
+    });
+
+    try {
+        await request(`${API_BASE}/${encodeURIComponent(id)}`, { method: 'DELETE' });
+        setHint('');
+        await loadTasks();
+    } catch (error) {
+        setHint(`删除失败：${error.message}`, 'error');
+        item.querySelectorAll('button').forEach((button) => {
+            button.disabled = false;
+        });
+    }
+}
+
+els.form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const title = els.input.value.trim();
+    if (title.length === 0) {
+        setHint('先写下任务内容。', 'error');
+        els.input.focus();
+        return;
+    }
+    if (title.length > 80) {
+        setHint('任务标题不能超过 80 个字符。', 'error');
+        els.input.focus();
+        return;
+    }
+    createTask(title);
+});
+
+els.retry.addEventListener('click', () => {
+    loadTasks();
+});
+
+els.list.addEventListener('click', (event) => {
+    const button = event.target.closest('button[data-action]');
+    if (!button || button.disabled) {
+        return;
+    }
+
+    const item = button.closest('.task');
+    if (!item || !els.list.contains(item)) {
+        return;
+    }
+
+    if (button.dataset.action === 'advance') {
+        advanceTask(item);
+    } else if (button.dataset.action === 'delete') {
+        deleteTask(item);
+    }
+});
+
+loadTasks();

@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>任务板 · Taskboard</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<main class="app">
+    <header class="app__header">
+        <h1 class="app__title">任务板</h1>
+        <p class="app__subtitle">原生 HTML / CSS / JavaScript 示例，数据保存在服务端内存中。</p>
+    </header>
+
+    <form class="composer" id="task-form" novalidate>
+        <label class="composer__label" for="task-title">新任务</label>
+        <div class="composer__row">
+            <input
+                    class="composer__input"
+                    id="task-title"
+                    name="title"
+                    type="text"
+                    maxlength="80"
+                    autocomplete="off"
+                    placeholder="例如：补齐接口文档"
+                    aria-describedby="composer-hint">
+            <button class="button button--primary" type="submit">添加</button>
+        </div>
+        <p class="composer__hint" id="composer-hint" role="status" aria-live="polite"></p>
+    </form>
+
+    <section class="board" aria-labelledby="board-heading">
+        <h2 class="board__heading" id="board-heading">当前任务</h2>
+
+        <p class="state state--loading" id="state-loading" role="status">正在加载…</p>
+        <p class="state state--empty" id="state-empty" hidden>还没有任务，先添加一条。</p>
+
+        <div class="state state--error" id="state-error" hidden>
+            <p id="state-error-message">加载失败。</p>
+            <button class="button" type="button" id="retry-button">重试</button>
+        </div>
+
+        <ul class="task-list" id="task-list" hidden></ul>
+    </section>
+</main>
+
+<template id="task-item-template">
+    <li class="task">
+        <span class="task__title"></span>
+        <span class="task__meta">
+            <span class="badge"></span>
+            <time class="task__time"></time>
+        </span>
+        <span class="task__actions">
+            <button class="button button--small" type="button" data-action="advance">推进</button>
+            <button class="button button--small button--danger" type="button" data-action="delete">删除</button>
+        </span>
+    </li>
+</template>
+
+<script src="app.js"></script>
+</body>
+</html>
