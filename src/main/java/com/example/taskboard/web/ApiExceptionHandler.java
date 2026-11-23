@@ -80,7 +80,7 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
             WebRequest request) {
         if (statusCode.is5xxServerError()) {
             log.error("Request failed with status {}", statusCode.value(), ex);
-            return build(HttpStatus.valueOf(statusCode.value()), "INTERNAL_ERROR", "internal server error");
+            return build(headers, HttpStatus.valueOf(statusCode.value()), "INTERNAL_ERROR", "internal server error");
         }
 
         // 4xx from Spring MVC itself: missing body, unknown value, bad method, missing resource.
@@ -89,24 +89,34 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
 
         int status = statusCode.value();
         if (status == HttpStatus.NOT_FOUND.value()) {
-            return build(HttpStatus.NOT_FOUND, "NOT_FOUND", "resource not found");
+            return build(headers, HttpStatus.NOT_FOUND, "NOT_FOUND", "resource not found");
         }
         if (status == HttpStatus.METHOD_NOT_ALLOWED.value()) {
-            return build(HttpStatus.METHOD_NOT_ALLOWED, "METHOD_NOT_ALLOWED", "HTTP method is not supported here");
+            return build(headers, HttpStatus.METHOD_NOT_ALLOWED, "METHOD_NOT_ALLOWED",
+                    "HTTP method is not supported here");
         }
         if (status == HttpStatus.UNSUPPORTED_MEDIA_TYPE.value()) {
-            return build(HttpStatus.UNSUPPORTED_MEDIA_TYPE, "UNSUPPORTED_MEDIA_TYPE",
+            return build(headers, HttpStatus.UNSUPPORTED_MEDIA_TYPE, "UNSUPPORTED_MEDIA_TYPE",
                     "Content-Type must be application/json");
         }
         if (ex instanceof HttpMessageNotReadableException) {
-            return build(HttpStatus.BAD_REQUEST, "MALFORMED_BODY",
+            return build(headers, HttpStatus.BAD_REQUEST, "MALFORMED_BODY",
                     "request body is malformed or has an unknown value");
         }
-        return build(HttpStatus.valueOf(status), "BAD_REQUEST", "request could not be processed");
+        return build(headers, HttpStatus.valueOf(status), "BAD_REQUEST", "request could not be processed");
     }
 
     private ResponseEntity<Object> build(HttpStatus status, String code, String message) {
+        return build(new HttpHeaders(), status, code, message);
+    }
+
+    /**
+     * Carries over the headers Spring already decided on. A 405 must echo {@code Allow}
+     * (RFC 9110 §15.5.6); dropping them makes the response non-conformant.
+     */
+    private ResponseEntity<Object> build(HttpHeaders headers, HttpStatus status, String code, String message) {
         return ResponseEntity.status(status)
+                .headers(headers)
                 .body(new ErrorResponse(code, message, Instant.now()));
     }
 }
