@@ -206,6 +206,28 @@ class TaskServiceTest {
     }
 
     @Test
+    void transitionTableMatchesTheDocumentedMatrix() {
+        // The full 4x4 matrix, asserted cell by cell. The browser keeps its own copy of this
+        // table; if this test and that copy ever disagree, the drag refusal and the server
+        // answer disagree too, which is how "the card just springs back" bugs happen.
+        boolean[][] expected = {
+                // to:  TODO   DOING  BLOCKED DONE
+                {true, true, true, false},   // from TODO
+                {true, true, true, true},    // from DOING
+                {true, true, true, false},   // from BLOCKED
+                {false, false, false, true}, // from DONE (same-status only)
+        };
+
+        TaskStatus[] order = {TaskStatus.TODO, TaskStatus.DOING, TaskStatus.BLOCKED, TaskStatus.DONE};
+        for (int from = 0; from < order.length; from++) {
+            for (int to = 0; to < order.length; to++) {
+                assertEquals(expected[from][to], order[from].canMoveTo(order[to]),
+                        order[from] + " -> " + order[to]);
+            }
+        }
+    }
+
+    @Test
     void allowsEveryDocumentedTransition() {
         Task task = create("move");
 

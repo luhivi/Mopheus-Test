@@ -30,7 +30,7 @@
 | 校验 | Jakarta Bean Validation | 随 Boot | `@Valid` + `@NotBlank` / `@Size` / `@NotNull` |
 | JSON | Jackson | 随 Boot | 开启严格反序列化，拒绝隐式强转 |
 | 构建 | Maven | 3.9.9 | 由仓库自带 `mvnw` 下载，无需全局安装 |
-| 测试 | JUnit 5 + MockMvc | 随 Boot | 52 个用例（服务层 22 + 接口层 30） |
+| 测试 | JUnit 5 + MockMvc | 随 Boot | 56 个用例（服务层 23 + 接口层 33） |
 | 前端 | 原生 HTML5 / CSS3 / ES6+ | — | **不引入任何框架与构建链**，无 Node 依赖 |
 
 **只需要 JDK 17。** Maven 由 wrapper 自举，npm / node 完全不需要。
@@ -78,8 +78,8 @@ java -jar target/taskboard-0.0.1-SNAPSHOT.jar --server.port=9090
 | 能力 | 怎么用 |
 | --- | --- |
 | 快速新建 | 顶部输入框回车或点「添加」，只填标题 |
-| 详细新建 / 编辑 | 「详细新建」或卡片上的「编辑」，弹窗里可设优先级、负责人、截止日期、标签 |
-| 改状态 | 拖拽卡片到目标列，或点卡片上的「推进」（待办 → 进行中 → 已完成） |
+| 详细新建 / 编辑 | 「详细新建」或卡片上的「编辑」，弹窗里可设优先级、负责人、截止日期、标签（**没有状态字段**，新建一律进「待办」） |
+| 改状态 | 拖拽卡片到目标列，或点卡片上的按钮：待办「推进」、进行中「推进」、阻塞「恢复进行中」 |
 | 筛选 | 状态、优先级、只看逾期、标题/标签关键词搜索 |
 | 排序 | 创建时间 / 截止日期 / 优先级，点右侧按钮切升序降序 |
 | 统计 | 顶部总数、各状态计数、逾期数。**口径是当前筛选结果**（前端按返回列表自己算） |
@@ -87,8 +87,10 @@ java -jar target/taskboard-0.0.1-SNAPSHOT.jar --server.port=9090
 
 **拖拽的边界与服务端用同一张表判断**：`TODO` 拖到「已完成」、`BLOCKED` 拖到「已完成」都会被拒绝
 并给出「不能从 X 直接移到 Y」的提示，已完成卡片本身也拖不动。前端查表提前拒绝，而不是发一个
-注定 409 的请求让卡片弹回去 —— 但也绝不拒绝服务端允许的移动（早期版本正是按「目标列是否是
-DONE」判断，误伤了 `BLOCKED → DONE`）。
+注定 409 的请求让卡片弹回去。
+
+**每一列都能用按钮离开**，包括阻塞 —— 移动端浏览器普遍不支持 HTML5 拖拽，拖拽不能是唯一入口。
+这与「已完成」不同：`DONE` 是终态，卡片上没有任何按钮，这是刻意的。
 拖拽之外，每张卡片都保留了「推进」按钮，键盘和触屏用户不用依赖拖拽。
 
 ---
@@ -153,6 +155,15 @@ DONE」判断，误伤了 `BLOCKED → DONE`）。
 客户演示时「改个标题，负责人和截止日期全没了」是最容易当场翻车的操作。
 现在行为一致且可预测，前端编辑弹窗本来就会回填完整对象，所以正常使用不会触发。
 
+### 未知字段会被拒绝
+
+`spring.jackson.deserialization.fail-on-unknown-properties=true`。拼错字段名（`priorty`）
+返回 400 `MALFORMED_BODY`，而不是静默用默认值 —— 这一点在 `PUT` 上尤其重要，因为它做全量替换，
+拼错 `priority` 会把紧急任务悄悄降级成普通。
+
+例外是 `GET` 返回的只读字段（`id` / `status` / `createdAt` / `updatedAt` / `overdue` / `daysOverdue`）：
+它们会被忽略而不是报错，这样「读一条、改一个字段、写回去」这种常见写法不会失败。
+
 ### 字段约束
 
 | 字段 | 约束 |
@@ -195,7 +206,7 @@ DONE」判断，误伤了 `BLOCKED → DONE`）。
 | --- | --- | --- |
 | 400 | `VALIDATION_FAILED` | 字段校验失败（标题空、标签过多等） |
 | 400 | `MALFORMED_BODY` | JSON 语法错误，或枚举值不存在 |
-| 400 | `MALFORMED_QUERY` | 查询参数取值非法 |
+| 400 | `MALFORMED_QUERY` | 查询参数取值非法（只回显参数名，**不回显取值**） |
 | 400 | `MALFORMED_PATH` | 路径段无法转换（例如 `/api/tasks/abc`） |
 | 404 | `TASK_NOT_FOUND` | 任务不存在 |
 | 404 | `NOT_FOUND` | 路由不存在 |
@@ -258,15 +269,18 @@ src/test/java/com/example/taskboard/
 
 ```
 $ ./mvnw -B test
-[INFO] Tests run: 22, Failures: 0, Errors: 0, Skipped: 0 -- TaskServiceTest
-[INFO] Tests run: 30, Failures: 0, Errors: 0, Skipped: 0 -- TaskApiTest
-[INFO] Tests run: 52, Failures: 0, Errors: 0, Skipped: 0
+[INFO] Tests run: 23, Failures: 0, Errors: 0, Skipped: 0 -- TaskServiceTest
+[INFO] Tests run: 33, Failures: 0, Errors: 0, Skipped: 0 -- TaskApiTest
+[INFO] Tests run: 56, Failures: 0, Errors: 0, Skipped: 0
 [INFO] BUILD SUCCESS
 ```
 
-服务层覆盖流转白名单的**每一条允许与每一条拒绝**（含 `TODO→DONE`、`BLOCKED→DONE` 两个跳步、
-`DONE` 终态、幂等空操作、失败不改状态）、排序（优先级序、截止日期 null 排最后）、
-筛选组合、逾期与今日到期的边界、标签去重、统计聚合。
+服务层用一张 4×4 矩阵逐格断言流转白名单（`transitionTableMatchesTheDocumentedMatrix`），
+另有 `TODO→DONE`、`BLOCKED→DONE` 跳步、`DONE` 终态、幂等空操作、失败不改状态等独立用例；
+以及排序（优先级序、截止日期 null 排最后）、筛选组合、逾期与今日到期边界、标签去重、统计聚合。
+
+`TaskApiTest` 用 `@TestMethodOrder(Random)` 跑，并在 `@BeforeEach` 清空存储 —— 只有在这种
+随机顺序下仍然全绿，才说明用例之间真的隔离。
 
 接口层除正常路径外，专门钉住了几个容易回归的地方：
 `Accept: text/html` 不能退化成 Whitelabel 页面、405 必须带 `Allow`、415 不能被压成 400、
@@ -298,6 +312,13 @@ $ ./mvnw -B test
 | `PUT` 可能绕过状态机偷改状态 | `PUT` 忽略 `status` 字段，状态只能走 `PATCH` |
 | 拖到 `DONE` 列会先视觉接受再被 409 打回 | `dragover` 阶段就拒绝，不给错误暗示 |
 | 重复提交当前状态被当成错误 | 定义为幂等空操作，不刷新 `updatedAt` |
+| PUT 语义一半一半（`priority` 保留、其余清空） | 统一为严格全量替换 |
+| 拼错字段名被静默吞掉 | 开 `fail-on-unknown-properties`，返回 400 |
+| 错误体回显了查询参数的值 | 只回显参数名，值不回显 |
+| 新建弹窗有「初始状态」下拉但服务端丢弃 | 删除该字段，新建一律 `TODO` |
+| 种子守卫用筛选后的列表判断，可能污染真实数据 | 改为向服务端查无筛选总数 |
+| 阻塞卡片只能靠拖拽移出 | 增加「恢复进行中」按钮 |
+| 测试共享内存状态，只在默认顺序下全绿 | `@BeforeEach` 清空 + 随机顺序执行 |
 
 ---
 
@@ -315,6 +336,8 @@ $ ./mvnw -B test
   **不要双开标签页编辑同一条任务**，后保存的会覆盖先保存的且无法察觉。
 - **两个统计口径不同**：`GET /api/tasks/stats` 是全局（不受筛选影响），顶部统计条是按筛选结果
   在前端算的。这是刻意的 —— 演示时需要「筛出来多少」和「总共有多少」同时可见。
+- **`overdue` 只做正向筛选**：`?overdue=true` 才筛；`false` 与不传等价。因为逾期只对
+  未完成任务有意义，`DONE` 任务即便截止日期已过也不算逾期。
 - **没有登录与权限**：任何能访问端口的人都能改所有任务。
 - **拖拽依赖 HTML5 原生 API**：桌面浏览器体验完整；移动端浏览器普遍不支持 HTML5 拖拽，
   所以每张卡片都保留了按钮操作作为等价入口。

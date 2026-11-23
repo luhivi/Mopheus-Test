@@ -2,10 +2,7 @@
 
 const API_BASE = '/api/tasks';
 const REQUEST_TIMEOUT_MS = 8000;
-const STATUS_ORDER = ['TODO', 'DOING', 'BLOCKED', 'DONE'];
 const STATUS_LABELS = { TODO: '待办', DOING: '进行中', BLOCKED: '阻塞', DONE: '已完成' };
-const PRIORITY_ORDER = ['LOW', 'NORMAL', 'HIGH', 'URGENT'];
-const PRIORITY_LABELS = { LOW: '低', NORMAL: '普通', HIGH: '高', URGENT: '紧急' };
 // Mirrors TaskStatus.ALLOWED on the server. Written out rather than derived so a drift is
 // visible in review; the matrix test in TaskApiTest and the DOM test both pin it.
 const ALLOWED_TRANSITIONS = {
@@ -14,7 +11,14 @@ const ALLOWED_TRANSITIONS = {
     BLOCKED: ['TODO', 'DOING'],
     DONE: [],
 };
-const ADVANCE_PATH = { TODO: 'DOING', DOING: 'DONE' };
+// Each status gets an explicit button target, because drag-and-drop is unavailable on touch and
+// to keyboard users. DONE has none: it is terminal.
+const BUTTON_TARGET = {
+    TODO: { to: 'DOING', label: '推进' },
+    DOING: { to: 'DONE', label: '推进' },
+    BLOCKED: { to: 'DOING', label: '恢复进行中' },
+    DONE: null,
+};
 
 function canMove(from, to) {
     if (from === to) {
@@ -29,7 +33,6 @@ let tasks = [];
 let filters = { q: '', status: '', priority: '', overdue: false, sort: 'createdAt', order: 'desc' };
 
 const els = {
-    stats: document.getElementById('stats'),
     statTotal: document.getElementById('stat-total'),
     statTodo: document.getElementById('stat-todo'),
     statDoing: document.getElementById('stat-doing'),
@@ -69,8 +72,6 @@ const els = {
     formPriority: document.getElementById('form-priority'),
     formAssignee: document.getElementById('form-assignee'),
     formDue: document.getElementById('form-due'),
-    formStatus: document.getElementById('form-status'),
-    formStatusField: document.getElementById('form-status-field'),
     formTags: document.getElementById('form-tags'),
     formHint: document.getElementById('form-hint'),
     formSubmit: document.getElementById('form-submit'),
@@ -293,11 +294,13 @@ function renderCard(task) {
     }
 
     const advance = node.querySelector('[data-action="advance"]');
-    const next = ADVANCE_PATH[task.status];
-    if (!next) {
+    const action = BUTTON_TARGET[task.status];
+    if (!action) {
         advance.hidden = true;
     } else {
-        advance.title = `推进到 ${STATUS_LABELS[next]}`;
+        advance.textContent = action.label;
+        advance.title = `改为「${STATUS_LABELS[action.to]}」`;
+        advance.dataset.target = action.to;
     }
 
     return node;
@@ -377,10 +380,11 @@ async function createTask(title) {
 }
 
 async function advanceTask(card, task) {
-    const next = ADVANCE_PATH[task.status];
-    if (!next) {
+    const action = BUTTON_TARGET[task.status];
+    if (!action) {
         return;
     }
+    const next = action.to;
     // Set synchronously: a double click lands here twice before the first await resolves.
     if (card.dataset.busy === '1') {
         return;
@@ -459,8 +463,8 @@ els.board.addEventListener('dragover', (event) => {
     }
     const sourceTask = tasks.find((item) => item.id === draggedTaskId);
     if (!sourceTask || !canMove(sourceTask.status, body.dataset.drop)) {
-        // Ask the same table the server asks. Rejecting by target column alone was wrong: it
-        // blocked BLOCKED -> DONE, which the server allows, so a legal move looked broken.
+        // Ask the same allow table the server asks. Rejecting by target column alone was wrong in
+        // the other direction: "anything into TODO is fine" would have accepted DONE -> TODO.
         return;
     }
     event.preventDefault();
@@ -528,8 +532,6 @@ function openDialogForCreate() {
     els.form.reset();
     els.formId.value = '';
     els.formPriority.value = 'NORMAL';
-    els.formStatus.value = 'TODO';
-    els.formStatusField.hidden = false;
     setFormHint('');
     els.dialog.showModal();
     els.formTitle.focus();
@@ -543,8 +545,6 @@ function openDialogForEdit(task) {
     els.formAssignee.value = task.assignee || '';
     els.formDue.value = task.dueDate || '';
     els.formTags.value = Array.isArray(task.tags) ? task.tags.join(', ') : '';
-    // Status is changed only through the dedicated endpoint, so the field is not offered here.
-    els.formStatusField.hidden = true;
     setFormHint('');
     els.dialog.showModal();
     els.formTitle.focus();
@@ -563,9 +563,9 @@ function collectFormPayload() {
         dueDate: els.formDue.value || null,
         tags,
     };
-    if (!els.formId.value) {
-        payload.status = els.formStatus.value;
-    }
+    // No status field: every new task starts at TODO on the server, and existing tasks change
+    // status only through PATCH. Sending one here would be silently dropped, which is exactly
+    // the kind of "UI promises A, backend does B" gap this board must not have.
     return payload;
 }
 
@@ -658,7 +658,16 @@ function isoDate(offsetDays) {
 }
 
 async function seedIfEmpty() {
-    if (tasks.length > 0) {
+    // Ask the server for the unfiltered truth. `tasks` holds whatever the current filter
+    // returned, so an empty filtered view on a non-empty board would otherwise seed 8 sample
+    // tasks straight into real data.
+    let existing;
+    try {
+        existing = await request(API_BASE, { headers: { Accept: 'application/json' } });
+    } catch (error) {
+        return;
+    }
+    if (Array.isArray(existing) && existing.length > 0) {
         return;
     }
     setHint('正在准备示例任务…');
@@ -785,9 +794,10 @@ window.addEventListener('hashchange', () => {
 
 readFiltersFromHash();
 
-// The seed only runs against a genuinely empty server, so a demo session never loses data.
+// The seed only runs against a genuinely empty server: seedIfEmpty re-checks the unfiltered
+// count itself, so a filtered-empty view never triggers it.
 loadTasks().then(() => {
-    if (tasks.length === 0 && filters.q === '' && filters.status === '' && filters.priority === '') {
+    if (tasks.length === 0) {
         seedIfEmpty();
     }
 });

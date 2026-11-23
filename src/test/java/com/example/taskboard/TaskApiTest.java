@@ -1,8 +1,13 @@
 package com.example.taskboard;
 
+import com.example.taskboard.service.TaskNotFoundException;
+import com.example.taskboard.service.TaskService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.MethodOrderer;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.TestMethodOrder;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -21,6 +26,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 @SpringBootTest
 @AutoConfigureMockMvc
+@TestMethodOrder(MethodOrderer.Random.class)
 class TaskApiTest {
 
     @Autowired
@@ -28,6 +34,26 @@ class TaskApiTest {
 
     @Autowired
     private ObjectMapper objectMapper;
+
+    @Autowired
+    private TaskService taskService;
+
+    /**
+     * The context is shared across methods and the store is in memory, so without this a test
+     * that counts rows sees whatever earlier tests left behind. The class runs in random order
+     * on purpose: a suite that only passes in one order is not testing isolation, it is getting
+     * lucky. A failure here means a test is reading state it did not create.
+     */
+    @BeforeEach
+    void resetStore() {
+        for (long id : taskService.findAll(null).stream().map(task -> task.id()).toList()) {
+            try {
+                taskService.delete(id);
+            } catch (TaskNotFoundException ignored) {
+                // Another test already removed it; nothing to do.
+            }
+        }
+    }
 
     @Test
     void createsTaskAndListsIt() throws Exception {
@@ -320,6 +346,48 @@ class TaskApiTest {
         mockMvc.perform(get("/api/tasks/stats"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.total").isNumber());
+    }
+
+    @Test
+    void rejectsMisspelledFieldInsteadOfSilentlyDefaulting() throws Exception {
+        mockMvc.perform(post("/api/tasks")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"x\",\"priorty\":\"URGENT\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("MALFORMED_BODY"));
+
+        long id = createTask("keep priority");
+        mockMvc.perform(put("/api/tasks/" + id)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"renamed\",\"priorty\":\"URGENT\"}"))
+                .andExpect(status().isBadRequest());
+
+        mockMvc.perform(get("/api/tasks/" + id))
+                .andExpect(jsonPath("$.title").value("keep priority"))
+                .andExpect(jsonPath("$.priority").value("NORMAL"));
+    }
+
+    @Test
+    void acceptsRoundTrippedReadOnlyFields() throws Exception {
+        long id = createTask("round trip");
+        String full = mockMvc.perform(get("/api/tasks/" + id))
+                .andReturn().getResponse().getContentAsString();
+
+        // A client that reads a task and writes it straight back must not fail on the fields it
+        // is not allowed to set; those are ignored rather than rejected.
+        mockMvc.perform(put("/api/tasks/" + id)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(full))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.title").value("round trip"));
+    }
+
+    @Test
+    void doesNotEchoQueryValuesBackInErrors() throws Exception {
+        mockMvc.perform(get("/api/tasks").param("status", "SECRET_TOKEN_VALUE_abc"))
+                .andExpect(jsonPath("$.code").value("MALFORMED_QUERY"))
+                .andExpect(content().string(org.hamcrest.Matchers.not(
+                        org.hamcrest.Matchers.containsString("SECRET_TOKEN_VALUE_abc"))));
     }
 
     @Test

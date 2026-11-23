@@ -40,8 +40,8 @@ public record TaskQuery(
     }
 
     public List<Task> apply(List<Task> source) {
-        String needle = q == null ? "" : q.trim().toLowerCase();
-        String owner = assignee == null ? "" : assignee.trim().toLowerCase();
+        String needle = q == null ? "" : q.trim().toLowerCase(java.util.Locale.ROOT);
+        String owner = assignee == null ? "" : assignee.trim().toLowerCase(java.util.Locale.ROOT);
 
         List<Task> filtered = new ArrayList<>();
         for (Task task : source) {
@@ -54,7 +54,7 @@ public record TaskQuery(
             if (!needle.isEmpty() && !matchesText(task, needle)) {
                 continue;
             }
-            if (!owner.isEmpty() && (task.assignee() == null || !task.assignee().toLowerCase().contains(owner))) {
+            if (!owner.isEmpty() && (task.assignee() == null || !task.assignee().toLowerCase(java.util.Locale.ROOT).contains(owner))) {
                 continue;
             }
             if (overdue != null && task.isOverdue(today) != overdue) {
@@ -68,10 +68,10 @@ public record TaskQuery(
     }
 
     private static boolean matchesText(Task task, String needle) {
-        if (task.title().toLowerCase().contains(needle)) {
+        if (task.title().toLowerCase(java.util.Locale.ROOT).contains(needle)) {
             return true;
         }
-        return task.tags().stream().anyMatch(tag -> tag.toLowerCase().contains(needle));
+        return task.tags().stream().anyMatch(tag -> tag.toLowerCase(java.util.Locale.ROOT).contains(needle));
     }
 
     private Comparator<Task> comparator() {

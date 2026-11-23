@@ -43,12 +43,4 @@ public enum TaskStatus {
         }
         return ALLOWED.getOrDefault(this, Collections.emptySet()).contains(target);
     }
-
-    public Set<TaskStatus> allowedTargets() {
-        return ALLOWED.getOrDefault(this, Collections.emptySet());
-    }
-
-    public boolean isTerminal() {
-        return this == DONE;
-    }
 }

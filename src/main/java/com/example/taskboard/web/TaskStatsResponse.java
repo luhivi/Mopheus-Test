@@ -4,7 +4,6 @@ import com.example.taskboard.model.TaskPriority;
 import com.example.taskboard.model.TaskStatus;
 import com.example.taskboard.service.TaskStats;
 
-import java.time.LocalDate;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -15,7 +14,7 @@ public record TaskStatsResponse(
         Map<String, Long> byStatus,
         Map<String, Long> byPriority) {
 
-    public static TaskStatsResponse from(TaskStats stats, LocalDate today) {
+    public static TaskStatsResponse from(TaskStats stats) {
         Map<String, Long> byStatus = new LinkedHashMap<>();
         for (TaskStatus status : TaskStatus.values()) {
             byStatus.put(status.name(), stats.byStatus().getOrDefault(status, 0L));

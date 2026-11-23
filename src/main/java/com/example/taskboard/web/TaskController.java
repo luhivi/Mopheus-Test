@@ -119,7 +119,7 @@ public class TaskController {
     @GetMapping("/stats")
     public TaskStatsResponse stats() {
         LocalDate today = LocalDate.now(clock);
-        return TaskStatsResponse.from(taskService.stats(today), today);
+        return TaskStatsResponse.from(taskService.stats(today));
     }
 
     @GetMapping("/{id}")
