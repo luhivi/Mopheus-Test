@@ -368,6 +368,32 @@ class TaskApiTest {
     }
 
     @Test
+    void acceptsRoundTrippedFieldsOnStatusPatch() throws Exception {
+        long id = createTask("patch round trip");
+        String full = mockMvc.perform(get("/api/tasks/" + id))
+                .andReturn().getResponse().getContentAsString();
+
+        // GET then PATCH must not be punished for sending back the fields it was given; only
+        // `status` is applied. Rejecting them would make the two endpoints asymmetric.
+        mockMvc.perform(patch("/api/tasks/" + id + "/status")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(full.replace("\"status\":\"TODO\"", "\"status\":\"DOING\"")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("DOING"));
+    }
+
+    @Test
+    void rejectsMisspelledFieldOnStatusPatch() throws Exception {
+        long id = createTask("patch typo");
+
+        mockMvc.perform(patch("/api/tasks/" + id + "/status")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"stats\":\"DOING\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("MALFORMED_BODY"));
+    }
+
+    @Test
     void acceptsRoundTrippedReadOnlyFields() throws Exception {
         long id = createTask("round trip");
         String full = mockMvc.perform(get("/api/tasks/" + id))

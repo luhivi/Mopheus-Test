@@ -30,7 +30,7 @@
 | 校验 | Jakarta Bean Validation | 随 Boot | `@Valid` + `@NotBlank` / `@Size` / `@NotNull` |
 | JSON | Jackson | 随 Boot | 开启严格反序列化，拒绝隐式强转 |
 | 构建 | Maven | 3.9.9 | 由仓库自带 `mvnw` 下载，无需全局安装 |
-| 测试 | JUnit 5 + MockMvc | 随 Boot | 56 个用例（服务层 23 + 接口层 33） |
+| 测试 | JUnit 5 + MockMvc | 随 Boot | 59 个用例（服务层 24 + 接口层 35） |
 | 前端 | 原生 HTML5 / CSS3 / ES6+ | — | **不引入任何框架与构建链**，无 Node 依赖 |
 
 **只需要 JDK 17。** Maven 由 wrapper 自举，npm / node 完全不需要。
@@ -117,7 +117,7 @@ java -jar target/taskboard-0.0.1-SNAPSHOT.jar --server.port=9090
 | `priority` | `LOW` `NORMAL` `HIGH` `URGENT` | 可重复，多值为「或」 |
 | `q` | 任意文本 | 匹配**标题或标签**，忽略大小写（不搜索负责人，负责人请用 `assignee`） |
 | `assignee` | 任意文本 | 匹配负责人，忽略大小写 |
-| `overdue` | `true` / `false` | 只留逾期 / 只留未逾期；不传表示不筛 |
+| `overdue` | `true` | 只留逾期。`false` 与不传等价，都表示**不筛选** |
 | `sort` | `createdAt` `dueDate` `priority` | 默认 `createdAt` |
 | `order` | `asc` `desc` | 默认 `desc`；只有显式 `asc` 才升序 |
 
@@ -161,8 +161,10 @@ java -jar target/taskboard-0.0.1-SNAPSHOT.jar --server.port=9090
 返回 400 `MALFORMED_BODY`，而不是静默用默认值 —— 这一点在 `PUT` 上尤其重要，因为它做全量替换，
 拼错 `priority` 会把紧急任务悄悄降级成普通。
 
-例外是 `GET` 返回的只读字段（`id` / `status` / `createdAt` / `updatedAt` / `overdue` / `daysOverdue`）：
-它们会被忽略而不是报错，这样「读一条、改一个字段、写回去」这种常见写法不会失败。
+例外是 `GET` 返回的那些字段：`POST` / `PUT` 会忽略 `id`、`status`、`createdAt`、`updatedAt`、
+`overdue`、`daysOverdue`；`PATCH .../status` 会忽略除 `status` 外的全部字段。
+它们被忽略而不是报错，这样「读一条、改一个字段、写回去」这种常见写法不会失败。
+两条写路径规则一致，不存在「PUT 宽容、PATCH 严格」这种不对称。
 
 ### 字段约束
 
@@ -205,7 +207,7 @@ java -jar target/taskboard-0.0.1-SNAPSHOT.jar --server.port=9090
 | HTTP | `code` | 触发场景 |
 | --- | --- | --- |
 | 400 | `VALIDATION_FAILED` | 字段校验失败（标题空、标签过多等） |
-| 400 | `MALFORMED_BODY` | JSON 语法错误，或枚举值不存在 |
+| 400 | `MALFORMED_BODY` | JSON 语法错误、枚举值不存在，或出现未知字段 |
 | 400 | `MALFORMED_QUERY` | 查询参数取值非法（只回显参数名，**不回显取值**） |
 | 400 | `MALFORMED_PATH` | 路径段无法转换（例如 `/api/tasks/abc`） |
 | 404 | `TASK_NOT_FOUND` | 任务不存在 |
@@ -250,8 +252,8 @@ src/main/resources/
   static/app.js                   请求封装、渲染、拖拽、筛选、弹窗
   static/style.css                四列看板与卡片样式
 src/test/java/com/example/taskboard/
-  TaskApiTest.java                24 个 MockMvc 用例（含 406/415/405/409 回归）
-  service/TaskServiceTest.java    19 个服务层用例（含完整流转矩阵）
+  TaskApiTest.java                35 个 MockMvc 用例（含 406/415/405/409 回归）
+  service/TaskServiceTest.java    24 个服务层用例（含 4x4 流转矩阵）
   support/MutableClock.java       可推进的测试时钟
 ```
 
@@ -269,9 +271,9 @@ src/test/java/com/example/taskboard/
 
 ```
 $ ./mvnw -B test
-[INFO] Tests run: 23, Failures: 0, Errors: 0, Skipped: 0 -- TaskServiceTest
-[INFO] Tests run: 33, Failures: 0, Errors: 0, Skipped: 0 -- TaskApiTest
-[INFO] Tests run: 56, Failures: 0, Errors: 0, Skipped: 0
+[INFO] Tests run: 24, Failures: 0, Errors: 0, Skipped: 0 -- TaskServiceTest
+[INFO] Tests run: 35, Failures: 0, Errors: 0, Skipped: 0 -- TaskApiTest
+[INFO] Tests run: 59, Failures: 0, Errors: 0, Skipped: 0
 [INFO] BUILD SUCCESS
 ```
 

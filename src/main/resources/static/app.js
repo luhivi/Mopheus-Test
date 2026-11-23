@@ -4,7 +4,8 @@ const API_BASE = '/api/tasks';
 const REQUEST_TIMEOUT_MS = 8000;
 const STATUS_LABELS = { TODO: '待办', DOING: '进行中', BLOCKED: '阻塞', DONE: '已完成' };
 // Mirrors TaskStatus.ALLOWED on the server. Written out rather than derived so a drift is
-// visible in review; the matrix test in TaskApiTest and the DOM test both pin it.
+// visible in review. The server side is pinned by transitionTableMatchesTheDocumentedMatrix;
+// this copy is not, so a change to the table must be made in both places.
 const ALLOWED_TRANSITIONS = {
     TODO: ['DOING', 'BLOCKED'],
     DOING: ['TODO', 'BLOCKED', 'DONE'],
@@ -300,7 +301,6 @@ function renderCard(task) {
     } else {
         advance.textContent = action.label;
         advance.title = `改为「${STATUS_LABELS[action.to]}」`;
-        advance.dataset.target = action.to;
     }
 
     return node;

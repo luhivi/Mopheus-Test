@@ -10,8 +10,8 @@ import org.springframework.context.annotation.Configuration;
 /**
  * Rejects input that Jackson would otherwise coerce silently.
  *
- * <p>The API contract says {@code title} is a string and {@code status} is one of three
- * enum names. By default Jackson accepts {@code {"title": 123}} as {@code "123"} and
+ * <p>The API contract says {@code title} is a string and {@code status} is one of four
+ * enum names (TODO, DOING, BLOCKED, DONE). By default Jackson accepts {@code {"title": 123}} as {@code "123"} and
  * {@code {"status": 2}} as the second enum constant, so the server would honour a
  * document the contract does not define. Both are rejected before any handler runs.
  */

@@ -10,14 +10,9 @@ package com.example.taskboard.web;
  */
 public class MalformedQueryException extends RuntimeException {
 
-    private final String parameterName;
-
     public MalformedQueryException(String parameterName, String value) {
+        // `value` is accepted so callers do not have to remember not to use it; it is never
+        // echoed. Keeping it in the signature makes that intent obvious at the call site.
         super("query parameter '" + parameterName + "' has an unsupported value");
-        this.parameterName = parameterName;
-    }
-
-    public String parameterName() {
-        return parameterName;
     }
 }

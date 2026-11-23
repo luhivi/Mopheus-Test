@@ -139,6 +139,25 @@ class TaskServiceTest {
     }
 
     @Test
+    void overdueFalseMeansDoNotFilterNotOnlyNotOverdue() {
+        service.create(new TaskService.Draft("late", null, null, TODAY.minusDays(2), null));
+        Task finished = service.create(new TaskService.Draft("finished late", null, null, TODAY.minusDays(2), null));
+        service.updateStatus(finished.id(), TaskStatus.DOING);
+        service.updateStatus(finished.id(), TaskStatus.DONE);
+        service.create(new TaskService.Draft("on time", null, null, TODAY.plusDays(2), null));
+
+        // `false` and an absent parameter must behave the same. Treating false as "only tasks
+        // that are not overdue" would return a set nobody asked for: not-overdue plus the
+        // finished-but-was-late ones.
+        TaskQuery explicitFalse = new TaskQuery(null, null, null, null, false, null, true, TODAY);
+        TaskQuery absent = new TaskQuery(null, null, null, null, null, null, true, TODAY);
+
+        assertEquals(3, service.findAll(explicitFalse).size());
+        assertEquals(3, service.findAll(absent).size());
+        assertEquals(1, service.findAll(new TaskQuery(null, null, null, null, true, null, true, TODAY)).size());
+    }
+
+    @Test
     void statsCountsStatusesPrioritiesAndOverdue() {
         service.create(new TaskService.Draft("a", TaskPriority.URGENT, null, TODAY.minusDays(1), null));
         Task done = service.create(new TaskService.Draft("b", TaskPriority.LOW, null, TODAY, null));

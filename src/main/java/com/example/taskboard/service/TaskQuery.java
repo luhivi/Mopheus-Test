@@ -57,7 +57,10 @@ public record TaskQuery(
             if (!owner.isEmpty() && (task.assignee() == null || !task.assignee().toLowerCase(java.util.Locale.ROOT).contains(owner))) {
                 continue;
             }
-            if (overdue != null && task.isOverdue(today) != overdue) {
+            // Only a positive `overdue=true` filters. `false` and an absent parameter both mean
+            // "do not filter": once a task is done it is never overdue, so `false` would silently
+            // return "not overdue plus finished-but-was-late", which is not a set anyone asked for.
+            if (Boolean.TRUE.equals(overdue) && !task.isOverdue(today)) {
                 continue;
             }
             filtered.add(task);
