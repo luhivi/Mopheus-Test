@@ -13,16 +13,18 @@
 | 项 | 版本 |
 | --- | --- |
 | JDK | 17.0.12（arm64） |
-| Maven | 3.9.9 |
+| Maven | 3.9.9（由仓库自带的 `./mvnw` 下载，无需全局安装） |
 | Spring Boot | 3.3.5 |
 | 前端 | 原生 HTML5 / CSS3 / ES6+，无 Node、无构建链 |
 
 ### 运行
 
 ```bash
-mvn test              # 11 个测试：7 个 MockMvc 接口测试 + 4 个 Service 单测
-mvn spring-boot:run   # 默认 http://localhost:8080
+./mvnw test              # 13 个测试：9 个 MockMvc 接口测试 + 4 个 Service 单测
+./mvnw spring-boot:run   # 默认 http://localhost:8080
 ```
+
+只有 JDK 17 是前提。Maven 由 wrapper 在首次运行时下载 3.9.9，不需要预装 `mvn`。
 
 打开 <http://localhost:8080/> 即为任务板页面。
 
@@ -35,18 +37,20 @@ mvn spring-boot:run   # 默认 http://localhost:8080
 | PATCH | `/api/tasks/{id}/status` | `{"status": "TODO\|DOING\|DONE"}` | 200 + 任务 | 400 非法枚举 / 404 不存在 |
 | DELETE | `/api/tasks/{id}` | — | 204 | 404 不存在 |
 
-错误体统一为 `{"code": "...", "message": "...", "timestamp": "..."}`，`message` 是白名单文案，不返回堆栈、SQL 或内部类名。
+错误体统一为 `{"code": "...", "message": "...", "timestamp": "..."}`，`message` 是白名单文案，不返回堆栈、SQL 或内部类名。框架自身的状态码（404 无此路由、405 方法不支持、415 媒体类型不支持）会原样保留，不会被兜底处理器压成 500。
 
 ### 已知限制
 
 - **数据存在内存里**：重启即清空，也不能多实例部署。要持久化需要接数据库。
 - 没有鉴权，任何人可读写，仅作样例。
 - 没有分页，任务量大时需要补。
+- 标题原样存储，不转义；显示端用 `textContent` 写入，所以不会执行，但接口消费者需要自行处理。
 
 ### 目录
 
 ```
 pom.xml
+mvnw / mvnw.cmd / .mvn/wrapper/
 src/main/java/com/example/taskboard/
   TaskboardApplication.java
   model/{Task,TaskStatus}.java
