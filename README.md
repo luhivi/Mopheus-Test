@@ -14,7 +14,7 @@
 | --- | --- |
 | JDK | 17.0.12（arm64） |
 | Maven | 3.9.9（由仓库自带的 `./mvnw` 下载，无需全局安装） |
-| Spring Boot | 3.3.5 |
+| Spring Boot | 3.5.16 |
 | 前端 | 原生 HTML5 / CSS3 / ES6+，无 Node、无构建链 |
 
 ### 运行
