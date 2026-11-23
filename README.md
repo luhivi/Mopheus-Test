@@ -20,7 +20,7 @@
 ### 运行
 
 ```bash
-./mvnw test              # 13 个测试：9 个 MockMvc 接口测试 + 4 个 Service 单测
+./mvnw test              # 15 个测试：11 个 MockMvc 接口测试 + 4 个 Service 单测
 ./mvnw spring-boot:run   # 默认 http://localhost:8080
 ```
 

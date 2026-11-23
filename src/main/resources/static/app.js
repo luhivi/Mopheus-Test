@@ -230,6 +230,12 @@ async function deleteTask(item) {
         item.querySelectorAll('button').forEach((button) => {
             button.disabled = false;
         });
+        // Same guard as advanceTask: a row that is already DONE must keep "推进" disabled,
+        // otherwise a failed delete hands the user a button that sends a pointless PATCH.
+        const badge = item.querySelector('.badge');
+        if (badge && badge.dataset.status === STATUS_FLOW[STATUS_FLOW.length - 1]) {
+            item.querySelector('[data-action="advance"]').disabled = true;
+        }
     }
 }
 

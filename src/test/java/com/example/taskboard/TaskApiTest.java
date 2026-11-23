@@ -148,6 +148,39 @@ class TaskApiTest {
                 .andExpect(header().string("Allow", org.hamcrest.Matchers.containsString("GET")));
     }
 
+    @Test
+    void keepsBusinessErrorStatusWhenClientCannotAcceptJson() throws Exception {
+        // Regression: without a pinned media type the handler's own body could not be
+        // negotiated, so Spring degraded this 404 into a 500 Whitelabel page.
+        mockMvc.perform(delete("/api/tasks/999").accept(MediaType.TEXT_HTML))
+                .andExpect(status().isNotFound())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+                .andExpect(jsonPath("$.code").value("TASK_NOT_FOUND"));
+    }
+
+    @Test
+    void rejectsNumericStatusOrdinal() throws Exception {
+        long id = createTask("ordinal");
+
+        mockMvc.perform(patch("/api/tasks/" + id + "/status")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"status\":2}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void rejectsNonStringTitle() throws Exception {
+        mockMvc.perform(post("/api/tasks")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":123}"))
+                .andExpect(status().isBadRequest());
+
+        mockMvc.perform(post("/api/tasks")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":true}"))
+                .andExpect(status().isBadRequest());
+    }
+
     private long createTask(String title) throws Exception {
         String body = mockMvc.perform(post("/api/tasks")
                         .contentType(MediaType.APPLICATION_JSON)

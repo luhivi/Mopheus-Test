@@ -113,10 +113,16 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
     /**
      * Carries over the headers Spring already decided on. A 405 must echo {@code Allow}
      * (RFC 9110 §15.5.6); dropping them makes the response non-conformant.
+     *
+     * <p>The media type is pinned to JSON because this handler serves both the framework
+     * exceptions and the application's own: without it, a client sending
+     * {@code Accept: text/html} cannot be satisfied, the handler itself fails, and Spring
+     * degrades the original 404 into a 500 Whitelabel page.
      */
     private ResponseEntity<Object> build(HttpHeaders headers, HttpStatus status, String code, String message) {
         return ResponseEntity.status(status)
                 .headers(headers)
+                .contentType(MediaType.APPLICATION_JSON)
                 .body(new ErrorResponse(code, message, Instant.now()));
     }
 }
