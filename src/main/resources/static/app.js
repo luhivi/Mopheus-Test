@@ -6,7 +6,23 @@ const STATUS_ORDER = ['TODO', 'DOING', 'BLOCKED', 'DONE'];
 const STATUS_LABELS = { TODO: '待办', DOING: '进行中', BLOCKED: '阻塞', DONE: '已完成' };
 const PRIORITY_ORDER = ['LOW', 'NORMAL', 'HIGH', 'URGENT'];
 const PRIORITY_LABELS = { LOW: '低', NORMAL: '普通', HIGH: '高', URGENT: '紧急' };
+// Mirrors TaskStatus.ALLOWED on the server. Written out rather than derived so a drift is
+// visible in review; the matrix test in TaskApiTest and the DOM test both pin it.
+const ALLOWED_TRANSITIONS = {
+    TODO: ['DOING', 'BLOCKED'],
+    DOING: ['TODO', 'BLOCKED', 'DONE'],
+    BLOCKED: ['TODO', 'DOING'],
+    DONE: [],
+};
 const ADVANCE_PATH = { TODO: 'DOING', DOING: 'DONE' };
+
+function canMove(from, to) {
+    if (from === to) {
+        return true;
+    }
+    const allowed = ALLOWED_TRANSITIONS[from];
+    return Array.isArray(allowed) && allowed.includes(to);
+}
 
 let latestLoadId = 0;
 let tasks = [];
@@ -415,7 +431,7 @@ els.board.addEventListener('dragstart', (event) => {
     if (!task) {
         return;
     }
-    if (task.status === 'DONE') {
+    if (!Array.isArray(ALLOWED_TRANSITIONS[task.status]) || ALLOWED_TRANSITIONS[task.status].length === 0) {
         // DONE is terminal on the server; refusing the drag up front avoids a pointless request
         // and explains why the card will not move instead of silently springing back.
         event.preventDefault();
@@ -441,9 +457,10 @@ els.board.addEventListener('dragover', (event) => {
     if (!body || draggedTaskId === null) {
         return;
     }
-    if (body.dataset.drop === 'DONE') {
-        // Do not accept the drop visually: the server would answer 409 and the card would vanish
-        // from under the cursor.
+    const sourceTask = tasks.find((item) => item.id === draggedTaskId);
+    if (!sourceTask || !canMove(sourceTask.status, body.dataset.drop)) {
+        // Ask the same table the server asks. Rejecting by target column alone was wrong: it
+        // blocked BLOCKED -> DONE, which the server allows, so a legal move looked broken.
         return;
     }
     event.preventDefault();
@@ -466,7 +483,15 @@ els.board.addEventListener('drop', async (event) => {
     const task = tasks.find((item) => item.id === draggedTaskId);
     draggedTaskId = null;
     body.classList.remove('column__body--over');
-    if (!task || task.status === target || target === 'DONE') {
+    if (!task) {
+        return;
+    }
+    if (task.status === target) {
+        return;
+    }
+    if (!canMove(task.status, target)) {
+        // Say why instead of letting the card spring back with no explanation.
+        setHint(`不能从「${STATUS_LABELS[task.status]}」直接移到「${STATUS_LABELS[target]}」。`, 'error');
         return;
     }
     await moveTask(task, target);
@@ -616,6 +641,14 @@ const SEED_TASKS = [
     { title: '主流程冒烟通过', priority: 'HIGH', assignee: '队长', dueInDays: -1, tags: ['验收'], status: 'DONE' }
 ];
 
+// Legal walks from TODO to each seeded status, using only transitions the server allows.
+const SEED_PATHS = {
+    TODO: [],
+    DOING: ['DOING'],
+    BLOCKED: ['BLOCKED'],
+    DONE: ['DOING', 'DONE'],
+};
+
 function isoDate(offsetDays) {
     const date = new Date();
     date.setDate(date.getDate() + offsetDays);
@@ -636,14 +669,22 @@ async function seedIfEmpty() {
             assignee: seed.assignee,
             dueDate: isoDate(seed.dueInDays),
             tags: seed.tags,
-            status: seed.status || 'TODO',
         };
         try {
-            await request(API_BASE, {
+            const created = await request(API_BASE, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
                 body: JSON.stringify(payload),
             });
+            // POST always starts a task at TODO, so the seed walks it to its target status
+            // through the same endpoint a user would use. No back door, no special seed path.
+            for (const step of SEED_PATHS[seed.status || 'TODO'] || []) {
+                await request(`${API_BASE}/${encodeURIComponent(created.id)}/status`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+                    body: JSON.stringify({ status: step }),
+                });
+            }
         } catch (error) {
             setHint(`示例数据准备失败：${error.message}`, 'error');
             return;

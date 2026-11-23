@@ -1,7 +1,6 @@
 package com.example.taskboard.web;
 
 import com.example.taskboard.model.TaskPriority;
-import com.example.taskboard.model.TaskStatus;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 
@@ -11,8 +10,9 @@ import java.util.List;
 /**
  * Body for {@code POST /api/tasks} and {@code PUT /api/tasks/{id}}.
  *
- * <p>{@code status} is accepted only on create; on update the status is owned by the dedicated
- * PATCH endpoint so a full edit can never smuggle a transition past the state machine.
+ * <p>There is no {@code status} field on purpose. A new task always starts at TODO and an
+ * existing one changes status only through {@code PATCH /{id}/status}. Accepting a status here
+ * would let a single request skip the transition table, which is the whole point of having one.
  */
 public record TaskPayload(
         @NotBlank(message = "title must not be blank")
@@ -28,7 +28,5 @@ public record TaskPayload(
 
         @Size(max = 5, message = "tags must contain at most 5 items")
         List<@NotBlank(message = "tag must not be blank")
-             @Size(max = 20, message = "each tag must be at most 20 characters") String> tags,
-
-        TaskStatus status) {
+             @Size(max = 20, message = "each tag must be at most 20 characters") String> tags) {
 }

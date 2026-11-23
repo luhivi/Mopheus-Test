@@ -27,7 +27,7 @@ class TaskServiceTest {
     private final TaskService service = new TaskService(FIXED);
 
     private Task create(String title) {
-        return service.create(new TaskService.Draft(title, null, null, null, null, null));
+        return service.create(new TaskService.Draft(title, null, null, null, null));
     }
 
     @Test
@@ -47,7 +47,7 @@ class TaskServiceTest {
 
     @Test
     void trimsTitleAndDropsBlankAssignee() {
-        Task task = service.create(new TaskService.Draft("  padded  ", null, "   ", null, null, null));
+        Task task = service.create(new TaskService.Draft("  padded  ", null, "   ", null, null));
 
         assertEquals("padded", task.title());
         assertNull(task.assignee());
@@ -56,7 +56,7 @@ class TaskServiceTest {
     @Test
     void deduplicatesTagsAndKeepsFirstOrder() {
         Task task = service.create(new TaskService.Draft("tagged", null, null, null,
-                List.of("b", "a", "b", "  c  "), null));
+                List.of("b", "a", "b", "  c  ")));
 
         assertEquals(List.of("b", "a", "c"), task.tags());
     }
@@ -84,9 +84,9 @@ class TaskServiceTest {
 
     @Test
     void sortsByPriorityThenId() {
-        service.create(new TaskService.Draft("low", TaskPriority.LOW, null, null, null, null));
-        service.create(new TaskService.Draft("urgent", TaskPriority.URGENT, null, null, null, null));
-        service.create(new TaskService.Draft("normal", TaskPriority.NORMAL, null, null, null, null));
+        service.create(new TaskService.Draft("low", TaskPriority.LOW, null, null, null));
+        service.create(new TaskService.Draft("urgent", TaskPriority.URGENT, null, null, null));
+        service.create(new TaskService.Draft("normal", TaskPriority.NORMAL, null, null, null));
 
         TaskQuery query = new TaskQuery(null, null, null, null, null, TaskQuery.SortKey.PRIORITY, false, TODAY);
         List<Task> tasks = service.findAll(query);
@@ -97,9 +97,9 @@ class TaskServiceTest {
 
     @Test
     void sortsByDueDateWithNullsLast() {
-        service.create(new TaskService.Draft("no due", null, null, null, null, null));
-        service.create(new TaskService.Draft("later", null, null, TODAY.plusDays(5), null, null));
-        service.create(new TaskService.Draft("sooner", null, null, TODAY.plusDays(1), null, null));
+        service.create(new TaskService.Draft("no due", null, null, null, null));
+        service.create(new TaskService.Draft("later", null, null, TODAY.plusDays(5), null));
+        service.create(new TaskService.Draft("sooner", null, null, TODAY.plusDays(1), null));
 
         TaskQuery query = new TaskQuery(null, null, null, null, null, TaskQuery.SortKey.DUE_DATE, false, TODAY);
 
@@ -110,9 +110,9 @@ class TaskServiceTest {
     @Test
     void filtersByStatusPriorityTextAndAssignee() {
         Task docs = service.create(new TaskService.Draft("write docs", TaskPriority.HIGH, "alice",
-                null, List.of("docs"), null));
+                null, List.of("docs")));
         service.create(new TaskService.Draft("fix bug", TaskPriority.LOW, "bob",
-                null, List.of("backend"), null));
+                null, List.of("backend")));
         service.updateStatus(docs.id(), TaskStatus.DOING);
 
         assertEquals(1, service.findAll(new TaskQuery(List.of(TaskStatus.DOING), null, null, null, null, null, true, TODAY)).size());
@@ -126,8 +126,9 @@ class TaskServiceTest {
 
     @Test
     void overdueExcludesDoneTasks() {
-        Task overdueOpen = service.create(new TaskService.Draft("open", null, null, TODAY.minusDays(2), null, null));
-        Task overdueDone = service.create(new TaskService.Draft("done", null, null, TODAY.minusDays(2), null, null));
+        Task overdueOpen = service.create(new TaskService.Draft("open", null, null, TODAY.minusDays(2), null));
+        Task overdueDone = service.create(new TaskService.Draft("done", null, null, TODAY.minusDays(2), null));
+        service.updateStatus(overdueDone.id(), TaskStatus.DOING);
         service.updateStatus(overdueDone.id(), TaskStatus.DONE);
 
         assertTrue(overdueOpen.isOverdue(TODAY));
@@ -139,8 +140,9 @@ class TaskServiceTest {
 
     @Test
     void statsCountsStatusesPrioritiesAndOverdue() {
-        service.create(new TaskService.Draft("a", TaskPriority.URGENT, null, TODAY.minusDays(1), null, null));
-        Task done = service.create(new TaskService.Draft("b", TaskPriority.LOW, null, TODAY, null, null));
+        service.create(new TaskService.Draft("a", TaskPriority.URGENT, null, TODAY.minusDays(1), null));
+        Task done = service.create(new TaskService.Draft("b", TaskPriority.LOW, null, TODAY, null));
+        service.updateStatus(done.id(), TaskStatus.DOING);
         service.updateStatus(done.id(), TaskStatus.DONE);
 
         TaskStats stats = service.stats(TODAY);
@@ -156,9 +158,10 @@ class TaskServiceTest {
 
     @Test
     void dueTodayIgnoresDoneTasks() {
-        Task task = service.create(new TaskService.Draft("today", null, null, TODAY, null, null));
+        Task task = service.create(new TaskService.Draft("today", null, null, TODAY, null));
         assertTrue(task.isDueToday(TODAY));
 
+        service.updateStatus(task.id(), TaskStatus.DOING);
         service.updateStatus(task.id(), TaskStatus.DONE);
 
         assertFalse(service.findById(task.id()).isDueToday(TODAY));
@@ -169,10 +172,10 @@ class TaskServiceTest {
     void updateRefreshesUpdatedAtButKeepsCreatedAt() {
         MutableClock clock = new MutableClock(Instant.parse("2026-01-01T00:00:00Z"), ZoneOffset.UTC);
         TaskService service = new TaskService(clock);
-        Task created = service.create(new TaskService.Draft("before", null, null, null, null, null));
+        Task created = service.create(new TaskService.Draft("before", null, null, null, null));
 
         clock.advance(Duration.ofMinutes(30));
-        Task updated = service.update(created.id(), new TaskService.Draft("after", null, null, null, null, null));
+        Task updated = service.update(created.id(), new TaskService.Draft("after", null, null, null, null));
 
         assertEquals(created.createdAt(), updated.createdAt());
         assertEquals(Instant.parse("2026-01-01T00:30:00Z"), updated.updatedAt());
@@ -181,11 +184,11 @@ class TaskServiceTest {
 
     @Test
     void updateReplacesEditableFieldsOnly() {
-        Task created = service.create(new TaskService.Draft("old", TaskPriority.LOW, "alice", TODAY, List.of("x"), null));
+        Task created = service.create(new TaskService.Draft("old", TaskPriority.LOW, "alice", TODAY, List.of("x")));
 
         MutableClock clock = new MutableClock(Instant.parse("2026-01-01T01:00:00Z"), ZoneOffset.UTC);
         Task updated = service.update(created.id(), new TaskService.Draft(
-                "new", TaskPriority.URGENT, "bob", TODAY.plusDays(1), List.of("y"), TaskStatus.DONE));
+                "new", TaskPriority.URGENT, "bob", TODAY.plusDays(1), List.of("y")));
 
         assertEquals("new", updated.title());
         assertEquals(TaskPriority.URGENT, updated.priority());
@@ -199,22 +202,54 @@ class TaskServiceTest {
     @Test
     void updateThrowsForMissingTask() {
         assertThrows(TaskNotFoundException.class, () -> service.update(42L,
-                new TaskService.Draft("x", null, null, null, null, null)));
+                new TaskService.Draft("x", null, null, null, null)));
     }
 
     @Test
-    void allowsEveryNonTerminalTransition() {
+    void allowsEveryDocumentedTransition() {
         Task task = create("move");
 
+        // TODO -> DOING -> BLOCKED -> DOING -> DONE follows the table without a shortcut.
         assertEquals(TaskStatus.DOING, service.updateStatus(task.id(), TaskStatus.DOING).status());
         assertEquals(TaskStatus.BLOCKED, service.updateStatus(task.id(), TaskStatus.BLOCKED).status());
-        assertEquals(TaskStatus.TODO, service.updateStatus(task.id(), TaskStatus.TODO).status());
+        assertEquals(TaskStatus.DOING, service.updateStatus(task.id(), TaskStatus.DOING).status());
         assertEquals(TaskStatus.DONE, service.updateStatus(task.id(), TaskStatus.DONE).status());
+    }
+
+    @Test
+    void todoCannotJumpStraightToDone() {
+        Task task = create("skips the work");
+
+        InvalidTaskTransitionException error = assertThrows(InvalidTaskTransitionException.class,
+                () -> service.updateStatus(task.id(), TaskStatus.DONE));
+
+        assertEquals("TODO", error.from());
+        assertEquals("DONE", error.to());
+        assertEquals(TaskStatus.TODO, service.findById(task.id()).status());
+    }
+
+    @Test
+    void blockedCannotSkipStraightToDone() {
+        Task task = create("blocked");
+        service.updateStatus(task.id(), TaskStatus.BLOCKED);
+
+        assertThrows(InvalidTaskTransitionException.class,
+                () -> service.updateStatus(task.id(), TaskStatus.DONE));
+        assertEquals(TaskStatus.BLOCKED, service.findById(task.id()).status());
+    }
+
+    @Test
+    void newTaskIgnoresRequestedInitialStatus() {
+        // Draft has no status field at all now; this pins that every task starts at TODO.
+        Task task = service.create(new TaskService.Draft("forced", TaskPriority.URGENT, "alice", null, null));
+
+        assertEquals(TaskStatus.TODO, task.status());
     }
 
     @Test
     void doneIsTerminal() {
         Task task = create("finish");
+        service.updateStatus(task.id(), TaskStatus.DOING);
         service.updateStatus(task.id(), TaskStatus.DONE);
 
         InvalidTaskTransitionException error = assertThrows(InvalidTaskTransitionException.class,

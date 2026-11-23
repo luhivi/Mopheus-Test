@@ -30,7 +30,7 @@
 | 校验 | Jakarta Bean Validation | 随 Boot | `@Valid` + `@NotBlank` / `@Size` / `@NotNull` |
 | JSON | Jackson | 随 Boot | 开启严格反序列化，拒绝隐式强转 |
 | 构建 | Maven | 3.9.9 | 由仓库自带 `mvnw` 下载，无需全局安装 |
-| 测试 | JUnit 5 + MockMvc | 随 Boot | 43 个用例（服务层 19 + 接口层 24） |
+| 测试 | JUnit 5 + MockMvc | 随 Boot | 52 个用例（服务层 22 + 接口层 30） |
 | 前端 | 原生 HTML5 / CSS3 / ES6+ | — | **不引入任何框架与构建链**，无 Node 依赖 |
 
 **只需要 JDK 17。** Maven 由 wrapper 自举，npm / node 完全不需要。
@@ -82,11 +82,13 @@ java -jar target/taskboard-0.0.1-SNAPSHOT.jar --server.port=9090
 | 改状态 | 拖拽卡片到目标列，或点卡片上的「推进」（待办 → 进行中 → 已完成） |
 | 筛选 | 状态、优先级、只看逾期、标题/标签关键词搜索 |
 | 排序 | 创建时间 / 截止日期 / 优先级，点右侧按钮切升序降序 |
-| 统计 | 顶部总数、各状态计数、逾期数，随筛选结果实时更新 |
+| 统计 | 顶部总数、各状态计数、逾期数。**口径是当前筛选结果**（前端按返回列表自己算） |
 | 状态可分享 | 筛选与排序条件写进 URL hash，复制链接即可还原同一视图 |
 
-**拖拽的边界是显式处理的**：不能拖到「已完成」列，已完成卡片也不能被拖动 ——
-服务端把 `DONE` 当终态，前端提前拒绝并给出提示，而不是发一个注定 409 的请求让卡片弹回去。
+**拖拽的边界与服务端用同一张表判断**：`TODO` 拖到「已完成」、`BLOCKED` 拖到「已完成」都会被拒绝
+并给出「不能从 X 直接移到 Y」的提示，已完成卡片本身也拖不动。前端查表提前拒绝，而不是发一个
+注定 409 的请求让卡片弹回去 —— 但也绝不拒绝服务端允许的移动（早期版本正是按「目标列是否是
+DONE」判断，误伤了 `BLOCKED → DONE`）。
 拖拽之外，每张卡片都保留了「推进」按钮，键盘和触屏用户不用依赖拖拽。
 
 ---
@@ -99,9 +101,9 @@ java -jar target/taskboard-0.0.1-SNAPSHOT.jar --server.port=9090
 | --- | --- | --- |
 | `GET` | `/api/tasks` | 列表，支持筛选与排序 |
 | `GET` | `/api/tasks/{id}` | 单条详情 |
-| `GET` | `/api/tasks/stats` | 统计（各状态/优先级计数、逾期数、今日到期数） |
+| `GET` | `/api/tasks/stats` | 全局统计（各状态/优先级计数、逾期数、今日到期数），**不随筛选变化** |
 | `POST` | `/api/tasks` | 新建 |
-| `PUT` | `/api/tasks/{id}` | 全量编辑（**不改状态**） |
+| `PUT` | `/api/tasks/{id}` | 全量替换可编辑字段（**不改状态**） |
 | `PATCH` | `/api/tasks/{id}/status` | 只改状态，走流转校验 |
 | `DELETE` | `/api/tasks/{id}` | 删除 |
 
@@ -111,7 +113,7 @@ java -jar target/taskboard-0.0.1-SNAPSHOT.jar --server.port=9090
 | --- | --- | --- |
 | `status` | `TODO` `DOING` `BLOCKED` `DONE` | 可重复，多值为「或」 |
 | `priority` | `LOW` `NORMAL` `HIGH` `URGENT` | 可重复，多值为「或」 |
-| `q` | 任意文本 | 匹配标题或标签，忽略大小写 |
+| `q` | 任意文本 | 匹配**标题或标签**，忽略大小写（不搜索负责人，负责人请用 `assignee`） |
 | `assignee` | 任意文本 | 匹配负责人，忽略大小写 |
 | `overdue` | `true` / `false` | 只留逾期 / 只留未逾期；不传表示不筛 |
 | `sort` | `createdAt` `dueDate` `priority` | 默认 `createdAt` |
@@ -138,6 +140,18 @@ java -jar target/taskboard-0.0.1-SNAPSHOT.jar --server.port=9090
 ```
 
 `overdue` / `daysOverdue` 是服务端算出来的，前端不自己判断日期 —— 只有一处真相。
+业务日期按**服务器本地时区**计算（`Clock.systemDefaultZone()`）；用 UTC 会让东八区在每天
+0 点到 8 点之间把「明天到期」算成「今天到期」。
+
+### `PUT` 是严格全量替换
+
+请求体里**缺失的字段会被清空**，而不是保留旧值。`priority` 缺失按 `NORMAL` 处理，
+`assignee` / `dueDate` 缺失按 `null`，`tags` 缺失按空数组。
+
+这意味着「只想改标题」也必须把其余字段一起传回来，否则会被清空。这不是偷懒，
+而是刻意选择了一种语义并贯彻到底：早期版本是「`priority` 保留、其余清空」的混合行为，
+客户演示时「改个标题，负责人和截止日期全没了」是最容易当场翻车的操作。
+现在行为一致且可预测，前端编辑弹窗本来就会回填完整对象，所以正常使用不会触发。
 
 ### 字段约束
 
@@ -148,18 +162,30 @@ java -jar target/taskboard-0.0.1-SNAPSHOT.jar --server.port=9090
 | `assignee` | 可空，去空格后最长 40 字符；空串按 `null` 存 |
 | `dueDate` | `yyyy-MM-dd`，可空。**允许过去日期**，见[已知限制](#已知限制) |
 | `tags` | 最多 5 个，每个 1–20 字符，去重后保持首次出现顺序 |
-| `status` | 仅新建时可指定；编辑时由 `PATCH .../status` 独占 |
+| `status` | **不属于新建/编辑入参**。新建一律从 `TODO` 开始，之后只能走 `PATCH .../status` |
 
 ### 状态流转
 
-```
-TODO ⇄ DOING        TODO ⇄ BLOCKED
-DOING ⇄ BLOCKED     DOING → DONE
-```
+| 当前 | 允许去向 |
+| --- | --- |
+| `TODO` | `DOING`、`BLOCKED` |
+| `DOING` | `TODO`、`BLOCKED`、`DONE` |
+| `BLOCKED` | `TODO`、`DOING` |
+| `DONE` | 无（终态） |
 
-规则很简单：**除了 `DONE` 之外，任意状态可以互转；`DONE` 是终态。**
-把已完成的任务退回待办，等于悄悄撤销别人已经当作完成的工作，所以服务端直接拒绝。
+这张表是**白名单**，不是「除了 DONE 随便转」。两者差别很具体：
+
+- `TODO → DONE` 被拒绝。没开始过的任务不可能完成，跳步在这里是最常见的操作失误。
+- `BLOCKED → DONE` 被拒绝，必须先回到 `DOING`。阻塞中的任务直接结项，等于没人处理它。
+- `DONE` 不可退回任何状态 —— 退回等于悄悄撤销别人已经当作完成的工作。
+
 重复提交当前状态是幂等的空操作，不算错误 —— 拖拽、重试、另一个标签页都会产生这种请求。
+
+**新建任务永远从 `TODO` 开始**，`POST` 请求体里的 `status` 会被忽略。
+这一条不是洁癖：如果允许新建时指定状态，任何客户端都能一步绕过整张表。
+
+前端 `app.js` 里的 `ALLOWED_TRANSITIONS` 是这张表的副本，用于拖拽时提前拒绝，
+避免发出注定 409 的请求。两份表的对齐由 `TaskApiTest` 与前端行为测试共同锁住。
 
 违反规则返回 **409 `INVALID_TRANSITION`**（不是 400：请求本身合法，是资源当前状态不允许）。
 
@@ -170,6 +196,7 @@ DOING ⇄ BLOCKED     DOING → DONE
 | 400 | `VALIDATION_FAILED` | 字段校验失败（标题空、标签过多等） |
 | 400 | `MALFORMED_BODY` | JSON 语法错误，或枚举值不存在 |
 | 400 | `MALFORMED_QUERY` | 查询参数取值非法 |
+| 400 | `MALFORMED_PATH` | 路径段无法转换（例如 `/api/tasks/abc`） |
 | 404 | `TASK_NOT_FOUND` | 任务不存在 |
 | 404 | `NOT_FOUND` | 路由不存在 |
 | 405 | `METHOD_NOT_ALLOWED` | 方法不支持（带 `Allow` 头） |
@@ -231,13 +258,14 @@ src/test/java/com/example/taskboard/
 
 ```
 $ ./mvnw -B test
-[INFO] Tests run: 19, Failures: 0, Errors: 0, Skipped: 0 -- TaskServiceTest
-[INFO] Tests run: 24, Failures: 0, Errors: 0, Skipped: 0 -- TaskApiTest
-[INFO] Tests run: 43, Failures: 0, Errors: 0, Skipped: 0
+[INFO] Tests run: 22, Failures: 0, Errors: 0, Skipped: 0 -- TaskServiceTest
+[INFO] Tests run: 30, Failures: 0, Errors: 0, Skipped: 0 -- TaskApiTest
+[INFO] Tests run: 52, Failures: 0, Errors: 0, Skipped: 0
 [INFO] BUILD SUCCESS
 ```
 
-服务层覆盖完整流转矩阵（含 `DONE` 终态与幂等空操作）、排序（优先级序、截止日期 null 排最后）、
+服务层覆盖流转白名单的**每一条允许与每一条拒绝**（含 `TODO→DONE`、`BLOCKED→DONE` 两个跳步、
+`DONE` 终态、幂等空操作、失败不改状态）、排序（优先级序、截止日期 null 排最后）、
 筛选组合、逾期与今日到期的边界、标签去重、统计聚合。
 
 接口层除正常路径外，专门钉住了几个容易回归的地方：
@@ -281,7 +309,12 @@ $ ./mvnw -B test
 - **没有并发控制**：两个标签页同时编辑同一任务，后保存的覆盖先保存的，`updatedAt` 无法
   判断谁更新。演示场景可以接受，真实场景需要 `ETag` / `If-Match`。
 - **允许创建已过期的截止日期**：新建时也不拦。因为编辑一条本来就已经逾期的任务时，
-  它的截止日期必然在过去 —— 拦了就会把正常的编辑变成无法保存。逾期改为在界面上标红提示。
+  「逾期」是一个**状态**而不是**非法输入**；拦了既会把正常编辑变成无法保存，也和「逾期数」统计
+  自相矛盾。逾期改为在界面上标红提示。
+- **最后写入者胜出**：`PUT` / `PATCH` 都不带版本号，没有 `ETag` / `If-Match`。演示时
+  **不要双开标签页编辑同一条任务**，后保存的会覆盖先保存的且无法察觉。
+- **两个统计口径不同**：`GET /api/tasks/stats` 是全局（不受筛选影响），顶部统计条是按筛选结果
+  在前端算的。这是刻意的 —— 演示时需要「筛出来多少」和「总共有多少」同时可见。
 - **没有登录与权限**：任何能访问端口的人都能改所有任务。
 - **拖拽依赖 HTML5 原生 API**：桌面浏览器体验完整；移动端浏览器普遍不支持 HTML5 拖拽，
   所以每张卡片都保留了按钮操作作为等价入口。
@@ -297,7 +330,13 @@ java -jar target/taskboard-0.0.1-SNAPSHOT.jar --server.port=9090
 ```
 
 前端是裸 JS，没有构建步骤，改完 `src/main/resources/static/` 下的文件重启即可生效
-（或者用 IDE 的静态资源热替换）。语法自检（无 Node 环境下）：
+（或者用 IDE 的静态资源热替换）。语法自检：
+
+```bash
+node --check src/main/resources/static/app.js    # 推荐
+```
+
+没有 Node 的机器上可以退回到 JavaScriptCore：
 
 ```bash
 /System/Library/Frameworks/JavaScriptCore.framework/Versions/A/Helpers/jsc \

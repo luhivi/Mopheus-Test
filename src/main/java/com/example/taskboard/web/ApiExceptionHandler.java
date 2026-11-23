@@ -13,6 +13,7 @@ import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.HttpMediaTypeNotAcceptableException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.WebRequest;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
@@ -56,8 +57,14 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
 
     @ExceptionHandler(MethodArgumentTypeMismatchException.class)
     public ResponseEntity<Object> handleTypeMismatch(MethodArgumentTypeMismatchException ex) {
-        // `?overdue=maybe` reaches here: the value cannot be turned into a boolean. Without this
-        // it would fall into the catch-all and become a 500, which falsely signals a server fault.
+        // Two different mistakes arrive here and they must not share a code: `?overdue=maybe` is a
+        // bad query string, while `/api/tasks/abc` is a path segment that cannot be an id. Calling
+        // the latter MALFORMED_QUERY tells the caller to look in the wrong place.
+        boolean pathVariable = ex.getParameter().hasParameterAnnotation(PathVariable.class);
+        if (pathVariable) {
+            return build(HttpStatus.BAD_REQUEST, "MALFORMED_PATH",
+                    "path segment '" + ex.getName() + "' is not a valid value");
+        }
         return build(HttpStatus.BAD_REQUEST, "MALFORMED_QUERY",
                 "query parameter '" + ex.getName() + "' has an unsupported value");
     }

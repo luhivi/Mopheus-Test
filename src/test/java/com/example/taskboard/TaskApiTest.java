@@ -115,16 +115,64 @@ class TaskApiTest {
 
         mockMvc.perform(patch("/api/tasks/" + id + "/status")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"status\":\"DONE\"}"))
+                        .content("{\"status\":\"DOING\"}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id").value(id))
                 .andExpect(jsonPath("$.title").value("move me"))
+                .andExpect(jsonPath("$.status").value("DOING"));
+
+        mockMvc.perform(patch("/api/tasks/" + id + "/status")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"status\":\"DONE\"}"))
+                .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("DONE"));
+    }
+
+    @Test
+    void rejectsTodoToDoneShortcutWith409() throws Exception {
+        long id = createTask("skip the work");
+
+        mockMvc.perform(patch("/api/tasks/" + id + "/status")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"status\":\"DONE\"}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("INVALID_TRANSITION"));
+
+        mockMvc.perform(get("/api/tasks/" + id))
+                .andExpect(jsonPath("$.status").value("TODO"));
+    }
+
+    @Test
+    void rejectsBlockedToDoneShortcutWith409() throws Exception {
+        long id = createTask("blocked");
+        mockMvc.perform(patch("/api/tasks/" + id + "/status")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"status\":\"BLOCKED\"}"))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(patch("/api/tasks/" + id + "/status")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"status\":\"DONE\"}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("INVALID_TRANSITION"));
+    }
+
+    @Test
+    void createIgnoresRequestedStatusAndAlwaysStartsTodo() throws Exception {
+        mockMvc.perform(post("/api/tasks")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"sneaky\",\"status\":\"DONE\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.status").value("TODO"));
     }
 
     @Test
     void rejectsTransitionOutOfDoneWith409() throws Exception {
         long id = createTask("finish me");
+        mockMvc.perform(patch("/api/tasks/" + id + "/status")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"status\":\"DOING\"}"))
+                .andExpect(status().isOk());
         mockMvc.perform(patch("/api/tasks/" + id + "/status")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"status\":\"DONE\"}"))
@@ -184,6 +232,28 @@ class TaskApiTest {
     }
 
     @Test
+    void putClearsFieldsThatAreOmitted() throws Exception {
+        long id = createTask("seed");
+        mockMvc.perform(put("/api/tasks/" + id)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"seeded\",\"priority\":\"URGENT\",\"assignee\":\"bob\","
+                                + "\"dueDate\":\"2030-01-01\",\"tags\":[\"x\",\"y\"]}"))
+                .andExpect(status().isOk());
+
+        // Strict PUT: what is absent in the body is cleared, so a title-only edit never leaves
+        // half of the old object behind and never pretends the omitted fields were kept.
+        mockMvc.perform(put("/api/tasks/" + id)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"only title\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.title").value("only title"))
+                .andExpect(jsonPath("$.priority").value("NORMAL"))
+                .andExpect(jsonPath("$.assignee").doesNotExist())
+                .andExpect(jsonPath("$.dueDate").doesNotExist())
+                .andExpect(jsonPath("$.tags.length()").value(0));
+    }
+
+    @Test
     void updateReturns404ForMissingTask() throws Exception {
         mockMvc.perform(put("/api/tasks/999999")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -215,6 +285,10 @@ class TaskApiTest {
         long beta = createTaskWith("beta", null);
         mockMvc.perform(patch("/api/tasks/" + beta + "/status")
                         .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"status\":\"DOING\"}"))
+                .andExpect(status().isOk());
+        mockMvc.perform(patch("/api/tasks/" + beta + "/status")
+                        .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"status\":\"DONE\"}"))
                 .andExpect(status().isOk());
 
@@ -230,6 +304,22 @@ class TaskApiTest {
 
         mockMvc.perform(get("/api/tasks").param("sort", "priority").param("order", "asc"))
                 .andExpect(status().isOk());
+    }
+
+    @Test
+    void reportsMalformedPathSeparatelyFromMalformedQuery() throws Exception {
+        mockMvc.perform(get("/api/tasks/abc"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("MALFORMED_PATH"));
+    }
+
+    @Test
+    void statsWinsOverIdRoute() throws Exception {
+        // Literal segments outrank variables in Spring's path matching regardless of declaration
+        // order; this test fails loudly if anyone changes {id} to String or adds a pattern.
+        mockMvc.perform(get("/api/tasks/stats"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.total").isNumber());
     }
 
     @Test

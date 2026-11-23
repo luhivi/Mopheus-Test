@@ -28,14 +28,16 @@ public class TaskService {
         this.clock = clock;
     }
 
-    /** Everything the service needs to build a task; {@code null} fields fall back to defaults. */
+    /**
+     * Everything the service needs to build or replace a task. There is deliberately no status
+     * field: status is set to TODO on create and changed only through {@link #updateStatus}.
+     */
     public record Draft(
             String title,
             TaskPriority priority,
             String assignee,
             LocalDate dueDate,
-            List<String> tags,
-            TaskStatus status) {
+            List<String> tags) {
     }
 
     public List<Task> findAll(TaskQuery query) {
@@ -57,7 +59,9 @@ public class TaskService {
         Task task = new Task(
                 id,
                 normalizeTitle(draft.title()),
-                draft.status() == null ? TaskStatus.TODO : draft.status(),
+                // New tasks always start at TODO. Accepting an initial status here would let any
+                // client skip the state machine entirely on the very first request.
+                TaskStatus.TODO,
                 draft.priority() == null ? TaskPriority.NORMAL : draft.priority(),
                 normalizeAssignee(draft.assignee()),
                 draft.dueDate(),
@@ -68,13 +72,22 @@ public class TaskService {
         return task;
     }
 
+    /**
+     * Full replacement of the editable fields. Status is not editable here: it is owned by
+     * {@link #updateStatus} so a status change can never bypass the transition table.
+     *
+     * <p>Semantics are strict PUT: a field that is absent from the request is cleared, not kept.
+     * The earlier version kept {@code priority} when it was missing but cleared the rest, which
+     * meant "edit only the title" silently erased the assignee and due date — the exact failure a
+     * demo cannot afford. Callers that want partial edits should send the whole object.
+     */
     public Task update(long id, Draft draft) {
         Instant now = Instant.now(clock);
         Task updated = tasks.computeIfPresent(id, (key, current) -> new Task(
                 current.id(),
                 normalizeTitle(draft.title()),
                 current.status(),
-                draft.priority() == null ? current.priority() : draft.priority(),
+                draft.priority() == null ? TaskPriority.NORMAL : draft.priority(),
                 normalizeAssignee(draft.assignee()),
                 draft.dueDate(),
                 normalizeTags(draft.tags()),

@@ -132,7 +132,7 @@ public class TaskController {
     public ResponseEntity<TaskResponse> create(@Valid @RequestBody TaskPayload payload) {
         LocalDate today = LocalDate.now(clock);
         TaskService.Draft draft = new TaskService.Draft(payload.title(), payload.priority(), payload.assignee(),
-                payload.dueDate(), payload.tags(), payload.status());
+                payload.dueDate(), payload.tags());
         return ResponseEntity.status(HttpStatus.CREATED)
                 .body(TaskResponse.from(taskService.create(draft), today));
     }
@@ -141,7 +141,7 @@ public class TaskController {
     public TaskResponse update(@PathVariable long id, @Valid @RequestBody TaskPayload payload) {
         LocalDate today = LocalDate.now(clock);
         TaskService.Draft draft = new TaskService.Draft(payload.title(), payload.priority(), payload.assignee(),
-                payload.dueDate(), payload.tags(), null);
+                payload.dueDate(), payload.tags());
         return TaskResponse.from(taskService.update(id, draft), today);
     }
 

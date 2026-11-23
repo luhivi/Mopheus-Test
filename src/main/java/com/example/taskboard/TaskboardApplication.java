@@ -13,8 +13,13 @@ public class TaskboardApplication {
         SpringApplication.run(TaskboardApplication.class, args);
     }
 
+    /**
+     * Business dates (overdue, due today) are local dates, so the clock must agree with the dates
+     * users type into the form. A UTC clock would call a task due "tomorrow" for anyone east of
+     * Greenwich from local midnight until the UTC day turns over — up to eight hours a day here.
+     */
     @Bean
     Clock clock() {
-        return Clock.systemUTC();
+        return Clock.systemDefaultZone();
     }
 }
