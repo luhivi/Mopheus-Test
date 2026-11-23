@@ -19,11 +19,7 @@ public class TaskService {
     private final AtomicLong sequence = new AtomicLong();
     private final Clock clock;
 
-    public TaskService() {
-        this(Clock.systemUTC());
-    }
-
-    TaskService(Clock clock) {
+    public TaskService(Clock clock) {
         this.clock = clock;
     }
 
