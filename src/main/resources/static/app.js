@@ -5,6 +5,8 @@ const REQUEST_TIMEOUT_MS = 8000;
 const STATUS_FLOW = ['TODO', 'DOING', 'DONE'];
 const STATUS_LABELS = { TODO: '待办', DOING: '进行中', DONE: '已完成' };
 
+let latestLoadId = 0;
+
 const els = {
     form: document.getElementById('task-form'),
     input: document.getElementById('task-title'),
@@ -123,12 +125,18 @@ function formatTime(iso) {
 }
 
 async function loadTasks() {
+    const requestId = ++latestLoadId;
     showState('loading');
-    setHint('');
     try {
         const tasks = await request(API_BASE, { headers: { Accept: 'application/json' } });
+        if (requestId !== latestLoadId) {
+            return;
+        }
         renderTasks(Array.isArray(tasks) ? tasks : []);
     } catch (error) {
+        if (requestId !== latestLoadId) {
+            return;
+        }
         els.errorMessage.textContent = `加载任务失败：${error.message}`;
         showState('error');
     }
@@ -147,8 +155,8 @@ async function createTask(title) {
             body: JSON.stringify({ title }),
         });
         els.input.value = '';
-        setHint('已添加。');
         await loadTasks();
+        setHint('已添加。');
     } catch (error) {
         setHint(`添加失败：${error.message}`, 'error');
     } finally {
@@ -161,9 +169,12 @@ async function advanceTask(item) {
     const id = item.dataset.id;
     const actionButton = item.querySelector('[data-action="advance"]');
 
-    if (actionButton.disabled) {
+    // A double click lands here twice before the first await resolves; the flag is set
+    // synchronously, so the second invocation bails out before sending another PATCH.
+    if (item.dataset.busy === '1') {
         return;
     }
+    item.dataset.busy = '1';
 
     const target = nextStatus(badge.dataset.status);
     const buttons = item.querySelectorAll('button');
@@ -180,10 +191,11 @@ async function advanceTask(item) {
             },
             body: JSON.stringify({ status: target }),
         });
-        setHint('');
         await loadTasks();
+        setHint('');
     } catch (error) {
         setHint(`更新状态失败：${error.message}`, 'error');
+        delete item.dataset.busy;
         buttons.forEach((button) => {
             button.disabled = false;
         });
@@ -196,9 +208,13 @@ async function advanceTask(item) {
 
 async function deleteTask(item) {
     const id = item.dataset.id;
+    if (item.dataset.busy === '1') {
+        return;
+    }
     if (!window.confirm('确定删除这条任务？')) {
         return;
     }
+    item.dataset.busy = '1';
 
     item.querySelectorAll('button').forEach((button) => {
         button.disabled = true;
@@ -206,10 +222,11 @@ async function deleteTask(item) {
 
     try {
         await request(`${API_BASE}/${encodeURIComponent(id)}`, { method: 'DELETE' });
-        setHint('');
         await loadTasks();
+        setHint('');
     } catch (error) {
         setHint(`删除失败：${error.message}`, 'error');
+        delete item.dataset.busy;
         item.querySelectorAll('button').forEach((button) => {
             button.disabled = false;
         });
