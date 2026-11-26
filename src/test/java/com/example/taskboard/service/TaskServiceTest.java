@@ -3,6 +3,7 @@ package com.example.taskboard.service;
 import com.example.taskboard.model.Task;
 import com.example.taskboard.model.TaskPriority;
 import com.example.taskboard.model.TaskStatus;
+import com.example.taskboard.support.InMemoryTaskStore;
 import com.example.taskboard.support.MutableClock;
 import org.junit.jupiter.api.Test;
 
@@ -24,7 +25,7 @@ class TaskServiceTest {
     private static final Clock FIXED = Clock.fixed(Instant.parse("2026-01-01T00:00:00Z"), ZoneOffset.UTC);
     private static final LocalDate TODAY = LocalDate.parse("2026-01-01");
 
-    private final TaskService service = new TaskService(FIXED);
+    private final TaskService service = new TaskService(new InMemoryTaskStore(FIXED), FIXED);
 
     private Task create(String title) {
         return service.create(new TaskService.Draft(title, null, null, null, null));
@@ -190,7 +191,7 @@ class TaskServiceTest {
     @Test
     void updateRefreshesUpdatedAtButKeepsCreatedAt() {
         MutableClock clock = new MutableClock(Instant.parse("2026-01-01T00:00:00Z"), ZoneOffset.UTC);
-        TaskService service = new TaskService(clock);
+        TaskService service = new TaskService(new InMemoryTaskStore(clock), clock);
         Task created = service.create(new TaskService.Draft("before", null, null, null, null));
 
         clock.advance(Duration.ofMinutes(30));

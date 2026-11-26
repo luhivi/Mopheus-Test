@@ -1,6 +1,7 @@
 package com.example.taskboard.web;
 
 import com.example.taskboard.service.InvalidTaskTransitionException;
+import com.example.taskboard.service.TaskConflictException;
 import com.example.taskboard.service.TaskNotFoundException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -53,6 +54,27 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
     @ExceptionHandler(MalformedQueryException.class)
     public ResponseEntity<Object> handleMalformedQuery(MalformedQueryException ex) {
         return build(HttpStatus.BAD_REQUEST, "MALFORMED_QUERY", ex.getMessage());
+    }
+
+    @ExceptionHandler(ValidationFailedException.class)
+    public ResponseEntity<Object> handleValidationFailed(ValidationFailedException ex) {
+        // Request-level checks that bean validation cannot express (ids array size, import mode).
+        // Same code as field errors so the client has one 400 branch, not two.
+        return build(HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", ex.getMessage());
+    }
+
+    @ExceptionHandler(ReplaceNotConfirmedException.class)
+    public ResponseEntity<Object> handleReplaceNotConfirmed(ReplaceNotConfirmedException ex) {
+        return build(HttpStatus.BAD_REQUEST, "REPLACE_NOT_CONFIRMED", ex.getMessage());
+    }
+
+    @ExceptionHandler(TaskConflictException.class)
+    public ResponseEntity<Object> handleConflict(TaskConflictException ex) {
+        // 409 for the same reason as INVALID_TRANSITION: the request is well formed, the resource
+        // moved underneath it. The message says "reload and retry" so the client knows it is not
+        // a permanent rejection.
+        return build(HttpStatus.CONFLICT, "CONCURRENT_MODIFICATION",
+                "task was modified by another request; reload and retry");
     }
 
     @ExceptionHandler(MethodArgumentTypeMismatchException.class)
