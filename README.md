@@ -187,12 +187,22 @@ POST /api/tasks/import
 - `merge` 全部追加、分配**新 id**；`replace` 在**单个事务**里清空任务与历史后导入，中途失败整体回滚。
 - `total` 是**导入完成后库内总数**。
 - 行内 `id` / `createdAt` / `updatedAt` / `overdue` / `daysOverdue` 一律忽略，重新生成 —— 导出文件可原样回灌。
+- **整份导出文件可以直接当导入 body 提交**：顶层多出的 `exportedAt` / `count` 会被忽略，
+  只需补上 `mode`（以及 `replace` 时的 `confirm`）。
+- 行内出现**白名单外的键**（例如拼错的 `priorty`、`statuz`）→ 整行跳过。
+  白名单 = `title/status/priority/assignee/dueDate/tags` + 上面那五个只读字段。
+  否则拼错会被当成「未提供」而静默写成默认值。
+- `status` / `priority` **空字符串等同未提供**，分别落 `TODO` / `NORMAL`；非法枚举名才跳过该行。
+  这是刻意的：某些导出工具会把缺失字段写成 `""`。
 - **导入是恢复路径**，允许直接落到任意合法状态（含 `DONE`），不受交互状态机约束。
 - 逐条校验，**整行跳过**而不报 400：`title` 空白或超 80；`status` / `priority` 非法枚举；
   `dueDate` 非法日期；`tags` 先归一化（trim/去重/去空）后超过 5 个或存在超过 20 字符的项；
   `assignee` 超过 40 字符。
 - 请求级：`mode` 非法 → 400 `VALIDATION_FAILED`；`tasks` 缺失/非数组 → 400 `VALIDATION_FAILED`；
   条数 >1000 → 400 `VALIDATION_FAILED`；`replace` 缺 `confirm:"replace"` → 400 `REPLACE_NOT_CONFIRMED`。
+- **`replace` 且没有一行通过校验 → 400，库内数据与原样不变**：先全量校验再决定是否清库，
+  宁可拒绝也不做「清空后导入 0 条」。`merge` 同理情况下返回 200（`imported:0`），
+  因为 merge 不具破坏性。
 
 **`replace` 为什么要 `confirm`**：清库是不可逆操作。前端的二次确认只活在前端，任何脚本、
 `curl` 调用或重放请求都能绕过它。要求 body 里显式带 `confirm` 是让「我要删光」成为调用方的
@@ -455,6 +465,11 @@ $ ./mvnw -B test
 - **没有登录与权限**：同上，见上一条。
 - **乐观锁只到 409**：冲突时本次写入不生效并返回 `CONCURRENT_MODIFICATION`，服务端不自动重试，
   需要调用方重读后再写。演示场景够用；需要「自动合并」就得引入真正的冲突策略。
+- **乐观锁的检测窗口只在写事务重叠期间**：`@Version` 是 `UPDATE ... WHERE version = ?`，
+  只拦得住「另一个写事务在我读之后、写之前提交」这一种交错。**不做跨请求版本校验** ——
+  两个标签页先后编辑同一条任务（先保存的那个早已提交结束）不会冲突，
+  后保存的照样覆盖先保存的，`updatedAt` 也无法判定谁更新。要拦住这种「慢冲突」，
+  必须在响应里暴露版本号并让客户端发 `If-Match` 做条件写；本方案不做，见上一条。
 - **`ddl-auto=update`**：适合本地与演示，不做版本化迁移。结构演进到需要回滚/审计的规模时，
   应换成 Flyway/Liquibase 这类迁移工具。
 - **允许创建已过期的截止日期**：新建时也不拦。因为编辑一条本来就已经逾期的任务时，
