@@ -11,7 +11,7 @@
     <header class="app__header">
         <div class="app__heading">
             <h1 class="app__title">任务看板</h1>
-            <p class="app__subtitle">原生 HTML / CSS / JavaScript 示例，任务保存在服务端内存中。</p>
+            <p class="app__subtitle">原生 HTML / CSS / JavaScript 示例，任务保存在服务端数据库中。</p>
         </div>
         <div class="stats" id="stats" aria-live="polite">
             <span class="stats__item"><span class="stats__value" id="stat-total">–</span><span class="stats__label">总数</span></span>
@@ -71,9 +71,39 @@
         </label>
         <button class="button button--small" type="button" id="sort-order" aria-pressed="false">降序</button>
         <button class="button button--small" type="button" id="filter-reset">重置</button>
+        <div class="toolbar__ops">
+            <button class="button button--small" type="button" id="export-button">导出 JSON</button>
+            <button class="button button--small" type="button" id="import-button">导入 JSON</button>
+            <input class="visually-hidden" type="file" id="import-file" accept=".json,application/json"
+                   aria-hidden="true" tabindex="-1">
+        </div>
     </section>
 
     <p class="hint hint--count" id="filter-count"></p>
+
+    <section class="batch-bar" id="batch-bar" aria-label="批量操作" hidden>
+        <span class="batch-bar__count" id="batch-count" aria-live="polite">已选 0 条</span>
+        <button class="button button--small" type="button" id="batch-select-all">全选</button>
+        <button class="button button--small" type="button" id="batch-clear">清空</button>
+        <span class="batch-bar__advance">
+            <label class="batch-bar__label" for="batch-target">推进到</label>
+            <select class="field__control" id="batch-target">
+                <option value="TODO">待办</option>
+                <option value="DOING">进行中</option>
+                <option value="BLOCKED">阻塞</option>
+                <option value="DONE">已完成</option>
+            </select>
+            <button class="button button--small button--primary" type="button" id="batch-apply">应用</button>
+        </span>
+        <button class="button button--small button--danger" type="button" id="batch-delete">删除所选</button>
+    </section>
+    <section class="batch-results" id="batch-results" aria-label="批量操作结果" hidden>
+        <div class="batch-results__header">
+            <p class="batch-results__summary" id="batch-summary"></p>
+            <button class="button button--tiny" type="button" id="batch-results-close">关闭</button>
+        </div>
+        <ul class="batch-results__list" id="batch-failures"></ul>
+    </section>
 
     <p class="state state--loading" id="state-loading" role="status">正在加载…</p>
     <p class="state state--empty" id="state-empty" hidden>没有符合条件的任务。</p>
@@ -147,6 +177,46 @@
     </form>
 </dialog>
 
+<dialog class="dialog" id="detail-dialog">
+    <div class="dialog__form">
+        <h2 class="dialog__title" id="detail-title"></h2>
+        <dl class="detail-meta" id="detail-meta"></dl>
+        <section class="activities" aria-label="活动记录">
+            <h3 class="activities__title">活动记录</h3>
+            <p class="activities__state" id="activities-state" role="status" aria-live="polite"></p>
+            <ul class="activities__list" id="activities-list"></ul>
+            <button class="button button--small" type="button" id="activity-retry" hidden>重试</button>
+        </section>
+        <div class="dialog__actions">
+            <button class="button" type="button" id="detail-close">关闭</button>
+        </div>
+    </div>
+</dialog>
+
+<dialog class="dialog" id="import-dialog">
+    <form class="dialog__form" id="import-form" novalidate>
+        <h2 class="dialog__title">导入 JSON</h2>
+        <p class="import-file" id="import-file-name"></p>
+        <fieldset class="import-modes">
+            <legend class="field__label">导入方式</legend>
+            <label class="import-mode">
+                <input type="radio" name="import-mode" value="merge" checked>
+                <span>合并：保留现有任务，全部追加为新任务</span>
+            </label>
+            <label class="import-mode">
+                <input type="radio" name="import-mode" value="replace">
+                <span>替换：清空现有全部任务后导入</span>
+            </label>
+        </fieldset>
+        <p class="import-warning" id="import-warning" role="alert" hidden>将清空现有全部任务且不可恢复，请确认已导出备份。</p>
+        <p class="hint" id="import-hint" role="status" aria-live="polite"></p>
+        <div class="dialog__actions">
+            <button class="button" type="button" id="import-cancel">取消</button>
+            <button class="button button--primary" type="submit" id="import-submit">开始导入</button>
+        </div>
+    </form>
+</dialog>
+
 <template id="task-card-template">
     <article class="card">
         <span class="card__priority" aria-hidden="true"></span>
@@ -159,6 +229,8 @@
             <ul class="card__tags"></ul>
         </div>
         <div class="card__actions">
+            <input class="card__check" type="checkbox" data-action="select" aria-label="选择任务">
+            <button class="button button--tiny" type="button" data-action="detail">详情</button>
             <button class="button button--tiny" type="button" data-action="edit">编辑</button>
             <button class="button button--tiny" type="button" data-action="advance">推进</button>
             <button class="button button--tiny button--danger" type="button" data-action="delete">删除</button>
