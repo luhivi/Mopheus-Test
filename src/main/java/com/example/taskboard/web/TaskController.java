@@ -349,15 +349,30 @@ public class TaskController {
         return out;
     }
 
+    /** Fields an import row may carry: the writable ones plus the read-only ones /export emits. */
+    private static final Set<String> IMPORT_ROW_FIELDS = Set.of(
+            "title", "status", "priority", "assignee", "dueDate", "tags",
+            "id", "createdAt", "updatedAt", "overdue", "daysOverdue");
+
     /**
-     * A field present with the wrong JSON type is a row-level error, not an omission.
+     * A row is unusable if any key is outside the whitelist, or a known key has the wrong JSON type.
      *
-     * <p>Without this, {@code {"status":2}} would read as "no status" and import as TODO, and a
-     * number where tags belong would read as "no tags" — both silently rewriting the caller's
-     * data. The spec's "illegal enum or date skips the row" has to cover the type as well as the
-     * value, or the strictness it asks for leaks away at exactly the layer that bypasses Jackson.
+     * <p>The whitelist matters as much as the type check. Reading only the keys we know means
+     * {@code {"priorty":"URGENT"}} looks like "no priority" and imports a NORMAL task, and
+     * {@code {"statuz":"DONE"}} imports a TODO one — a misspelling that silently rewrites the
+     * caller's data to the default. The interactive payloads already reject unknown names; an
+     * import that bypasses Jackson must not be the one place where a typo is accepted.
+     *
+     * <p>{@code id}, {@code createdAt}, {@code updatedAt}, {@code overdue} and {@code daysOverdue}
+     * are allowed because {@code /export} writes them; they are then discarded, which is the
+     * documented behaviour and what keeps "export then import" working.
      */
     private static boolean rowHasWronglyTypedField(JsonNode row) {
+        for (var names = row.fieldNames(); names.hasNext(); ) {
+            if (!IMPORT_ROW_FIELDS.contains(names.next())) {
+                return true;
+            }
+        }
         for (String field : new String[]{"title", "status", "priority", "assignee", "dueDate"}) {
             JsonNode value = row.get(field);
             if (value != null && !value.isNull() && !value.isTextual()) {

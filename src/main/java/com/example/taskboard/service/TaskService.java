@@ -12,6 +12,7 @@ import com.example.taskboard.persistence.TaskRepository;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import com.example.taskboard.web.ValidationFailedException;
 
 import java.time.Clock;
 import java.time.Instant;
@@ -139,7 +140,12 @@ public class TaskService {
         if (!Objects.equals(entity.getDueDate(), dueDate)) {
             changed.add("截止日期");
         }
-        if (!entity.getTags().equals(tags)) {
+        // Order-insensitive. The tags are a set of labels, not a ranked list, and the edit dialog
+        // posts the whole form back: with a positional comparison, a user who only retyped the
+        // assignee still produced a "修改字段：标签" history entry whenever the browser's tag order
+        // differed from the stored one. Duplicates are already removed by normalizeTags, so two
+        // same-size HashSets are the right test.
+        if (!java.util.Set.copyOf(entity.getTags()).equals(java.util.Set.copyOf(tags))) {
             changed.add("标签");
         }
         if (changed.isEmpty()) {
@@ -244,10 +250,32 @@ public class TaskService {
      *
      * <p>{@code replace} is a single transaction: clear, then insert. A failure halfway through
      * leaves the previous data intact instead of an empty board.
+     *
+     * <p>Validation runs to completion <em>before</em> the clear. Doing it in one pass — clear,
+     * then validate each row as it is written — meant a replace whose every row was invalid still
+     * wiped the board and its history, then reported "imported 0" with a 200. The user would have
+     * destroyed their data and been told it worked. Clearing is therefore gated on at least one
+     * valid row.
      */
     @Transactional
     public ImportResult importTasks(String mode, List<ImportRow> rows) {
+        List<ValidRow> valid = new ArrayList<>(rows.size());
+        int skipped = 0;
+        for (ImportRow row : rows) {
+            ValidRow checked = validateRow(row);
+            if (checked == null) {
+                skipped++;
+            } else {
+                valid.add(checked);
+            }
+        }
+
         if ("replace".equals(mode)) {
+            if (valid.isEmpty()) {
+                // Nothing to write, so there is nothing a clear could accomplish except losing
+                // data. Refusing here keeps the board and its history exactly as they were.
+                throw new ValidationFailedException("replace would clear the board but no row is valid");
+            }
             // Tag rows carry a foreign key to tasks and must go first, or the bulk delete fails.
             // History goes with the tasks: the board is being rebuilt from a file, and keeping the
             // old history would leave rows attributed to ids that now mean different tasks.
@@ -257,35 +285,45 @@ public class TaskService {
         }
 
         int imported = 0;
-        int skipped = 0;
-        for (ImportRow row : rows) {
-            if (row.malformed()) {
-                skipped++;
-                continue;
-            }
-            String title = row.title() == null ? "" : row.title().trim();
-            TaskStatus status = parseStatus(row.status());
-            TaskPriority priority = parsePriority(row.priority());
-            ParsedDate dueDate = parseDueDate(row.dueDate());
-            String assignee = normalizeAssignee(row.assignee());
-            List<String> tags = normalizeTags(row.tags());
-
-            // A title over 80 or an assignee over 40 is skipped for the same reason a blank title
-            // is: the interactive API refuses those values, so accepting them on import would put
-            // a task on the board that can never be saved again from the edit dialog.
-            if (title.isEmpty() || title.length() > 80
-                    || status == null || priority == null || !dueDate.valid()
-                    || (assignee != null && assignee.length() > 40)
-                    || tags.size() > 5
-                    || tags.stream().anyMatch(tag -> tag.length() > 20)) {
-                skipped++;
-                continue;
-            }
-
-            createWithStatus(new Draft(title, priority, assignee, dueDate.value(), tags), status);
+        for (ValidRow row : valid) {
+            createWithStatus(row.draft(), row.status());
             imported++;
         }
         return new ImportResult(mode, imported, skipped, tasks.count());
+    }
+
+    /** A row that survived every check, ready to be written. */
+    private record ValidRow(Draft draft, TaskStatus status) {
+    }
+
+    /**
+     * Turns a wire row into a writable one, or {@code null} when the row must be skipped.
+     *
+     * <p>Pure and side-effect free: it is what lets the caller decide whether to clear at all, so
+     * it must not touch the store.
+     */
+    private ValidRow validateRow(ImportRow row) {
+        if (row.malformed()) {
+            return null;
+        }
+        String title = row.title() == null ? "" : row.title().trim();
+        TaskStatus status = parseStatus(row.status());
+        TaskPriority priority = parsePriority(row.priority());
+        ParsedDate dueDate = parseDueDate(row.dueDate());
+        String assignee = normalizeAssignee(row.assignee());
+        List<String> tags = normalizeTags(row.tags());
+
+        // A title over 80 or an assignee over 40 is skipped for the same reason a blank title
+        // is: the interactive API refuses those values, so accepting them on import would put
+        // a task on the board that can never be saved again from the edit dialog.
+        if (title.isEmpty() || title.length() > 80
+                || status == null || priority == null || !dueDate.valid()
+                || (assignee != null && assignee.length() > 40)
+                || tags.size() > 5
+                || tags.stream().anyMatch(tag -> tag.length() > 20)) {
+            return null;
+        }
+        return new ValidRow(new Draft(title, priority, assignee, dueDate.value(), tags), status);
     }
 
     /**

@@ -16,6 +16,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.OrderColumn;
 import jakarta.persistence.Table;
+import org.hibernate.annotations.BatchSize;
 import jakarta.persistence.Version;
 
 import java.time.Instant;
@@ -62,6 +63,13 @@ public class TaskEntity {
     // EAGER is not laziness: with spring.jpa.open-in-view=false the session is closed when the
     // service returns, so a LAZY collection would fail on every GET. @OrderColumn is what keeps
     // the first-seen order of tags, which the API has always returned and the UI renders as-is.
+    //
+    // @BatchSize turns the list endpoints from N+1 into a handful of queries: 600 tasks with an
+    // EAGER collection is 1 query for the tasks plus 600 for their tags, which is visible as a
+    // slow board and was measured as 601 SELECTs. Batching fetches the same rows 50 owners at a
+    // time (13 queries instead of 601). EAGER stays — the fetch type is part of the contract; only
+    // the number of round trips changes.
+    @BatchSize(size = 50)
     @ElementCollection(fetch = FetchType.EAGER)
     @CollectionTable(name = "task_tags", joinColumns = @JoinColumn(name = "task_id"))
     @OrderColumn(name = "tag_order")

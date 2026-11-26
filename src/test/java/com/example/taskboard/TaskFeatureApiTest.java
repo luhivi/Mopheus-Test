@@ -439,6 +439,65 @@ class TaskFeatureApiTest {
     }
 
     @Test
+    void importReplaceAllInvalidRowsIsRejectedBeforeClearing() throws Exception {
+        long keep = createTask("must survive");
+        moveTo(keep, "DOING");
+
+        // P0 regression: replace used to clear the board first and validate second, so a file
+        // whose every row was bad left the user with nothing — and no way back, because the
+        // history rows went with the tasks. The 400 has to come *before* the delete.
+        mockMvc.perform(post(BASE + "/import")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"mode\":\"replace\",\"confirm\":\"replace\","
+                                + "\"tasks\":[{\"title\":\"\"},{\"title\":\"x\",\"status\":\"NOPE\"}]}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                .andExpect(jsonPath("$.message")
+                        .value("replace would clear the board but no row is valid"));
+
+        mockMvc.perform(get(BASE))
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].title").value("must survive"))
+                .andExpect(jsonPath("$[0].status").value("DOING"));
+
+        // The history is the other half of the damage: it is the only record the task existed.
+        mockMvc.perform(get(BASE + "/" + keep + "/activities"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(2));
+    }
+
+    @Test
+    void importMergeWithAllInvalidRowsIsStillOk() throws Exception {
+        createTask("survivor");
+
+        // Only replace is destructive, so only replace needs the empty-valid guard. A merge that
+        // imports nothing is a report, not an error: the board was never at risk.
+        mockMvc.perform(post(BASE + "/import")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"mode\":\"merge\",\"tasks\":[{\"title\":\"\"}]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.imported").value(0))
+                .andExpect(jsonPath("$.skipped").value(1))
+                .andExpect(jsonPath("$.total").value(1));
+    }
+
+    @Test
+    void importReplaceWithOneValidRowStillWorks() throws Exception {
+        createTask("old");
+
+        // The guard must key on "no valid row", not on "some row was skipped": a file with one
+        // good row and one bad row is still a usable restore.
+        mockMvc.perform(post(BASE + "/import")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"mode\":\"replace\",\"confirm\":\"replace\","
+                                + "\"tasks\":[{\"title\":\"\"},{\"title\":\"good\"}]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.imported").value(1))
+                .andExpect(jsonPath("$.skipped").value(1))
+                .andExpect(jsonPath("$.total").value(1));
+    }
+
+    @Test
     void importRoundTripsAnExportFile() throws Exception {
         long id = createTask("round trip");
         mockMvc.perform(put(BASE + "/" + id)
@@ -448,14 +507,18 @@ class TaskFeatureApiTest {
 
         String exported = mockMvc.perform(get(BASE + "/export"))
                 .andReturn().getResponse().getContentAsString();
-        com.fasterxml.jackson.databind.JsonNode tasks =
-                new com.fasterxml.jackson.databind.ObjectMapper().readTree(exported).get("tasks");
+        com.fasterxml.jackson.databind.JsonNode file =
+                new com.fasterxml.jackson.databind.ObjectMapper().readTree(exported);
+        com.fasterxml.jackson.databind.node.ObjectNode body = file.deepCopy();
+        body.put("mode", "merge");
 
-        // The exported rows are sent straight back, extra read-only fields and all.
-        String body = "{\"mode\":\"merge\",\"tasks\":" + tasks + "}";
+        // The whole export document goes back, not a hand-built shell of it. Sending only
+        // {mode,tasks} would dodge the very failure this test exists to catch: the export's own
+        // top-level keys (exportedAt, count) used to be rejected by the strict unknown-property
+        // setting, so a real user's "export then import" was a 400.
         mockMvc.perform(post(BASE + "/import")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(body))
+                        .content(body.toString()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.imported").value(1))
                 .andExpect(jsonPath("$.skipped").value(0))
@@ -503,6 +566,66 @@ class TaskFeatureApiTest {
         mockMvc.perform(get(BASE))
                 .andExpect(jsonPath("$.length()").value(1))
                 .andExpect(jsonPath("$[0].title").value("survivor"));
+    }
+
+    @Test
+    void importSkipsRowWithAMisspelledFieldInsteadOfDefaulting() throws Exception {
+        // A typo used to read as "field omitted", so {"priorty":"URGENT"} imported a NORMAL task
+        // and {"statuz":"DONE"} imported a TODO one — the caller's data was silently rewritten to
+        // the default. An unknown key makes the row unusable, exactly like a bad enum name.
+        for (String typo : new String[]{
+                "{\"title\":\"a\",\"priorty\":\"URGENT\"}",
+                "{\"title\":\"b\",\"due_date\":\"2030-01-01\"}",
+                "{\"title\":\"c\",\"statuz\":\"DONE\"}"}) {
+            mockMvc.perform(post(BASE + "/import")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"mode\":\"merge\",\"tasks\":[" + typo + "]}"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.imported").value(0))
+                    .andExpect(jsonPath("$.skipped").value(1));
+        }
+
+        mockMvc.perform(get(BASE)).andExpect(jsonPath("$.length()").value(0));
+    }
+
+    @Test
+    void importStillAcceptsTheReadOnlyFieldsAnExportCarries() throws Exception {
+        // The whitelist must cover exactly what /export emits, or the round trip breaks again.
+        mockMvc.perform(post(BASE + "/import")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"mode\":\"merge\",\"tasks\":[{\"id\":41,\"title\":\"ok\","
+                                + "\"createdAt\":\"2025-01-01T00:00:00Z\","
+                                + "\"updatedAt\":\"2025-01-02T00:00:00Z\","
+                                + "\"overdue\":false,\"daysOverdue\":0}]}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.imported").value(1))
+                .andExpect(jsonPath("$.skipped").value(0));
+    }
+
+    @Test
+    void reorderingTagsOnlyIsNotAnUpdate() throws Exception {
+        long id = createTask("tagged");
+        mockMvc.perform(put(BASE + "/" + id)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"tagged\",\"tags\":[\"x\",\"y\"]}"))
+                .andExpect(status().isOk());
+        int before = activityCount(id);
+
+        // The edit dialog sends the whole form back. A user who only changed the assignee must not
+        // get a phantom "修改字段：标签" line just because the client reordered the tag list; tags
+        // are a set to the user, and only a different set is a change.
+        mockMvc.perform(put(BASE + "/" + id)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"title\":\"tagged\",\"tags\":[\"y\",\"x\"]}"))
+                .andExpect(status().isOk());
+
+        assertEquals(before, activityCount(id), "a pure reorder must write no UPDATED row");
+    }
+
+    private int activityCount(long id) throws Exception {
+        String body = mockMvc.perform(get(BASE + "/" + id + "/activities"))
+                .andReturn().getResponse().getContentAsString();
+        return new com.fasterxml.jackson.databind.ObjectMapper().readTree(body).size();
     }
 
     @Test
