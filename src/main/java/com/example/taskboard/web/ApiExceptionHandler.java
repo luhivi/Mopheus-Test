@@ -4,6 +4,7 @@ import com.example.taskboard.service.InvalidTaskTransitionException;
 import com.example.taskboard.service.TaskNotFoundException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
@@ -53,6 +54,28 @@ public class ApiExceptionHandler extends ResponseEntityExceptionHandler {
     @ExceptionHandler(MalformedQueryException.class)
     public ResponseEntity<Object> handleMalformedQuery(MalformedQueryException ex) {
         return build(HttpStatus.BAD_REQUEST, "MALFORMED_QUERY", ex.getMessage());
+    }
+
+    @ExceptionHandler(ValidationFailedException.class)
+    public ResponseEntity<Object> handleValidationFailed(ValidationFailedException ex) {
+        // Request-level failure for batch and import: the body parsed as JSON, but its shape or
+        // values cannot be accepted for the request as a whole. Row-level failures are not errors
+        // and never reach this handler.
+        return build(HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", ex.getMessage());
+    }
+
+    @ExceptionHandler(ReplaceNotConfirmedException.class)
+    public ResponseEntity<Object> handleReplaceNotConfirmed(ReplaceNotConfirmedException ex) {
+        return build(HttpStatus.BAD_REQUEST, "REPLACE_NOT_CONFIRMED", ex.getMessage());
+    }
+
+    @ExceptionHandler(OptimisticLockingFailureException.class)
+    public ResponseEntity<Object> handleOptimisticLock(OptimisticLockingFailureException ex) {
+        // Two requests changed the same task; the loser's write was not applied. 409 tells the
+        // caller to re-read and retry rather than leaving it to guess whether it won.
+        log.debug("Optimistic lock conflict: {}", ex.getMessage());
+        return build(HttpStatus.CONFLICT, "CONCURRENT_MODIFICATION",
+                "the task was modified by another request");
     }
 
     @ExceptionHandler(MethodArgumentTypeMismatchException.class)

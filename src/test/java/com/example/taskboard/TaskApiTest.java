@@ -2,8 +2,10 @@ package com.example.taskboard;
 
 import com.example.taskboard.service.TaskNotFoundException;
 import com.example.taskboard.service.TaskService;
+import com.example.taskboard.support.StoreReset;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.MethodOrderer;
 import org.junit.jupiter.api.Test;
@@ -11,8 +13,10 @@ import org.junit.jupiter.api.TestMethodOrder;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -26,6 +30,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 @SpringBootTest
 @AutoConfigureMockMvc
+@Import(StoreReset.ClockConfig.class)
 @TestMethodOrder(MethodOrderer.Random.class)
 class TaskApiTest {
 
@@ -38,21 +43,24 @@ class TaskApiTest {
     @Autowired
     private TaskService taskService;
 
+    @Autowired
+    private EntityManager entityManager;
+
+    @Autowired
+    private TransactionTemplate transactionTemplate;
+
     /**
-     * The context is shared across methods and the store is in memory, so without this a test
-     * that counts rows sees whatever earlier tests left behind. The class runs in random order
-     * on purpose: a suite that only passes in one order is not testing isolation, it is getting
-     * lucky. A failure here means a test is reading state it did not create.
+     * The context is shared across methods and the store is a real database, so without this a
+     * test that counts rows sees whatever earlier tests left behind. The class runs in random
+     * order on purpose: a suite that only passes in one order is not testing isolation, it is
+     * getting lucky. A failure here means a test is reading state it did not create.
+     *
+     * <p>History and the identity counters are reset too: ids are asserted to be 1 on a fresh
+     * board, and H2 identity sequences survive a rollback.
      */
     @BeforeEach
     void resetStore() {
-        for (long id : taskService.findAll(null).stream().map(task -> task.id()).toList()) {
-            try {
-                taskService.delete(id);
-            } catch (TaskNotFoundException ignored) {
-                // Another test already removed it; nothing to do.
-            }
-        }
+        StoreReset.wipe(entityManager, transactionTemplate);
     }
 
     @Test

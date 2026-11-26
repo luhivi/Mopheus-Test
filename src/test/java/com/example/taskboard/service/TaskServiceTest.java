@@ -4,13 +4,18 @@ import com.example.taskboard.model.Task;
 import com.example.taskboard.model.TaskPriority;
 import com.example.taskboard.model.TaskStatus;
 import com.example.taskboard.support.MutableClock;
+import com.example.taskboard.support.StoreReset;
+import jakarta.persistence.EntityManager;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.context.annotation.Import;
+import org.springframework.transaction.support.TransactionTemplate;
 
-import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
-import java.time.ZoneOffset;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -19,12 +24,36 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+/**
+ * Domain rules, kept intact across the move from a map to a database.
+ *
+ * <p>The service is the real Spring bean on purpose: {@code update} is a read-modify-write that
+ * relies on dirty checking inside its own transaction, so a hand-constructed instance holding
+ * detached entities would appear to work and silently save nothing.
+ */
+@SpringBootTest
+@Import(StoreReset.ClockConfig.class)
 class TaskServiceTest {
 
-    private static final Clock FIXED = Clock.fixed(Instant.parse("2026-01-01T00:00:00Z"), ZoneOffset.UTC);
     private static final LocalDate TODAY = LocalDate.parse("2026-01-01");
 
-    private final TaskService service = new TaskService(FIXED);
+    @Autowired
+    private TaskService service;
+
+    @Autowired
+    private MutableClock clock;
+
+    @Autowired
+    private EntityManager entityManager;
+
+    @Autowired
+    private TransactionTemplate transactionTemplate;
+
+    @BeforeEach
+    void resetStore() {
+        clock.reset(Instant.parse("2026-01-01T00:00:00Z"));
+        StoreReset.wipe(entityManager, transactionTemplate);
+    }
 
     private Task create(String title) {
         return service.create(new TaskService.Draft(title, null, null, null, null));
@@ -189,8 +218,6 @@ class TaskServiceTest {
 
     @Test
     void updateRefreshesUpdatedAtButKeepsCreatedAt() {
-        MutableClock clock = new MutableClock(Instant.parse("2026-01-01T00:00:00Z"), ZoneOffset.UTC);
-        TaskService service = new TaskService(clock);
         Task created = service.create(new TaskService.Draft("before", null, null, null, null));
 
         clock.advance(Duration.ofMinutes(30));
@@ -205,7 +232,6 @@ class TaskServiceTest {
     void updateReplacesEditableFieldsOnly() {
         Task created = service.create(new TaskService.Draft("old", TaskPriority.LOW, "alice", TODAY, List.of("x")));
 
-        MutableClock clock = new MutableClock(Instant.parse("2026-01-01T01:00:00Z"), ZoneOffset.UTC);
         Task updated = service.update(created.id(), new TaskService.Draft(
                 "new", TaskPriority.URGENT, "bob", TODAY.plusDays(1), List.of("y")));
 

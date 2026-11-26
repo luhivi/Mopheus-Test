@@ -3,3 +3,6 @@ target/
 .DS_Store
 .idea/
 *.iml
+
+# H2 file database. Deleting this directory is the documented way to reset the board.
+data/

@@ -16,7 +16,8 @@
 它最初只是一个「新建 → 推进 → 删除」的最小样例，用来给 Mopheus 的编码流程提供一块
 **可验收的试金石**：需求能从接口契约反向验证，代码能被真实跑起来，缺陷能被审查流程抓出来。
 第一轮确实抓出了 8 个真实缺陷（见[对抗审查记录](#对抗审查记录)），于是第二轮把它做厚成
-**能给客户直接演示的形态**，同时保留原来那套已被验证的契约。
+**能给客户直接演示的形态**，同时保留原来那套已被验证的契约。第三轮把它从「演示版」推到
+「可日常使用」：数据落库重启不丢、每条任务带操作历史、支持批量推进/删除、支持 JSON 导入导出。
 
 ---
 
@@ -30,13 +31,14 @@
 | 校验 | Jakarta Bean Validation | 随 Boot | `@Valid` + `@NotBlank` / `@Size` / `@NotNull` |
 | JSON | Jackson | 随 Boot | 开启严格反序列化，拒绝隐式强转 |
 | 构建 | Maven | 3.9.9 | 由仓库自带 `mvnw` 下载，无需全局安装 |
-| 测试 | JUnit 5 + MockMvc | 随 Boot | 59 个用例（服务层 24 + 接口层 35） |
+| 存储 | Spring Data JPA + H2 | 随 Boot（Hibernate 6.6 / H2 2.3） | H2 文件库 `./data/taskboard`，重启不丢 |
+| 测试 | JUnit 5 + MockMvc | 随 Boot | 85 个用例（服务层 24 + 既有接口 35 + 新能力 24 + 并发 2） |
 | 前端 | 原生 HTML5 / CSS3 / ES6+ | — | **不引入任何框架与构建链**，无 Node 依赖 |
 
 **只需要 JDK 17。** Maven 由 wrapper 自举，npm / node 完全不需要。
 
-存储是进程内 `ConcurrentHashMap`：**重启即丢，且只能单实例部署**。这是刻意的，
-因为样例要的是「一条命令起得来」，不是「能上生产」。
+任务存在 H2 文件数据库里（`./data/taskboard.mv.db`），进程重启数据仍在。删除 `data/` 目录即可
+完全重置（该目录已进 `.gitignore`）。仍然是单实例本地部署，不做集群。
 
 ---
 
@@ -66,10 +68,21 @@ java -jar target/taskboard-0.0.1-SNAPSHOT.jar
 java -jar target/taskboard-0.0.1-SNAPSHOT.jar --server.port=9090
 ```
 
+### 重置数据
+
+```bash
+# 必须先停进程：H2 文件库同一时刻只允许一个进程持有
+rm -rf data/
+```
+
+`data/` 是纯本地状态，删掉等于回到全新看板。它已进 `.gitignore`，不会被提交。
+
 ### 首次打开会自动准备示例数据
 
 服务端为空时，前端会写入 8 条示例任务（覆盖四个状态、四种优先级、逾期/今日到期/无截止日期）。
-**只有服务端一条任务都没有时才会写入**，不会覆盖已有数据；重启进程后示例数据也一起消失。
+守卫用的是**服务端无筛选总数**，所以筛选后看起来是空页面也不会误播种。示例数据同样落库，
+重启后仍在。删掉其中几条不会触发重播种；**把任务清到一条不剩再刷新页面**，守卫判定为空，
+会重新播一遍 —— 想彻底清空并保持为空，请用上面的「重置数据」并留意这一点。
 
 ---
 
@@ -80,6 +93,9 @@ java -jar target/taskboard-0.0.1-SNAPSHOT.jar --server.port=9090
 | 快速新建 | 顶部输入框回车或点「添加」，只填标题 |
 | 详细新建 / 编辑 | 「详细新建」或卡片上的「编辑」，弹窗里可设优先级、负责人、截止日期、标签（**没有状态字段**，新建一律进「待办」） |
 | 改状态 | 拖拽卡片到目标列，或点卡片上的按钮：待办「推进」、进行中「推进」、阻塞「恢复进行中」 |
+| 操作历史 | 点开卡片详情，抽屉里有该任务的倒序时间线（创建/编辑/改状态/删除），时间显示为相对时间 |
+| 批量操作 | 卡片左上角勾选，顶部出现批量栏：已选计数、全选/清空、批量推进到某状态、批量删除（带确认） |
+| 导入导出 | 工具栏「导出 JSON」直接下载；「导入 JSON」选文件后可 merge 追加或 replace 替换（替换有红字警示 + 二次确认） |
 | 筛选 | 状态、优先级、只看逾期、标题/标签关键词搜索 |
 | 排序 | 创建时间 / 截止日期 / 优先级，点右侧按钮切升序降序 |
 | 统计 | 顶部总数、各状态计数、逾期数。**口径是当前筛选结果**（前端按返回列表自己算） |
@@ -104,10 +120,83 @@ java -jar target/taskboard-0.0.1-SNAPSHOT.jar --server.port=9090
 | `GET` | `/api/tasks` | 列表，支持筛选与排序 |
 | `GET` | `/api/tasks/{id}` | 单条详情 |
 | `GET` | `/api/tasks/stats` | 全局统计（各状态/优先级计数、逾期数、今日到期数），**不随筛选变化** |
+| `GET` | `/api/tasks/{id}/activities` | 该任务的操作历史，倒序 |
+| `GET` | `/api/tasks/export` | 导出全部任务为 JSON 附件 |
 | `POST` | `/api/tasks` | 新建 |
 | `PUT` | `/api/tasks/{id}` | 全量替换可编辑字段（**不改状态**） |
 | `PATCH` | `/api/tasks/{id}/status` | 只改状态，走流转校验 |
-| `DELETE` | `/api/tasks/{id}` | 删除 |
+| `DELETE` | `/api/tasks/{id}` | 删除（历史保留） |
+| `POST` | `/api/tasks/batch-status` | 批量改状态，逐条独立 |
+| `POST` | `/api/tasks/batch-delete` | 批量删除，逐条独立 |
+| `POST` | `/api/tasks/import` | 从 JSON 导入，merge / replace |
+
+### 操作历史（`GET /api/tasks/{id}/activities?limit=50`）
+
+倒序返回该任务的历史行，`limit` 缺省 50、取值 1–200，越界或非数字返回 400 `MALFORMED_QUERY`。
+
+```json
+[
+  {"id":2,"taskId":1,"type":"STATUS_CHANGED","detail":"TODO → DOING","createdAt":"2026-11-26T04:02:25.339705Z"},
+  {"id":1,"taskId":1,"type":"CREATED","detail":"创建任务","createdAt":"2026-11-26T04:02:25.246048Z"}
+]
+```
+
+`type` 四值：`CREATED` / `UPDATED` / `STATUS_CHANGED` / `DELETED`。
+
+**两条抑制规则**，避免历史里出现自相矛盾的记录：
+
+- 同一状态的 `PATCH`（幂等空操作）**不写历史**；
+- `PUT` 在归一化（trim / 去重 / 空→null）之后零差异，**不写历史、也不动 `updatedAt`**。
+
+**删除任务保留历史**：删除行任务本身，另追加一条 `DELETED` 活动行。任务不存在但留有历史时，
+该接口仍返回 200（审计可查）；任务从未存在、也没有任何历史才返回 404 `TASK_NOT_FOUND`。
+活动行与任务行之间**没有外键**，正是为了让删除证据留下来。
+
+### 批量操作
+
+```json
+POST /api/tasks/batch-status  {"ids":[1,2,3],"status":"DOING"}
+POST /api/tasks/batch-delete  {"ids":[1,2]}
+→ 200 {"results":[
+    {"id":1,"ok":true,"task":{ ...TaskResponse 全字段... }},
+    {"id":2,"ok":false,"code":"INVALID_TRANSITION","message":"..."}]}
+```
+
+- **逐条独立执行、独立提交**：单条失败不影响其他条，整批仍返回 200。
+- `results` 顺序 = 请求 ids **去重后**顺序（重复 id 落到首次出现的位置）。
+- 成功条目 `task` 是完整 `TaskResponse`；失败条目只有 `{id, ok:false, code, message}`，没有 `task`。
+- batch-delete 的成功条目**不含** `task`（任务已删，没有资源可返回）。
+- 请求级问题（`ids` 缺失 / 非数组 / 空 / 含非整数 / 去重后 >200；`status` 非法）→ 400 `VALIDATION_FAILED`。
+
+> 单条失败在 `code` 里体现，**不能以 HTTP 200 判定全部成功**。前端必须逐条读 `results`。
+
+### 导入 / 导出
+
+```json
+GET /api/tasks/export
+→ 200 application/json
+  Content-Disposition: attachment; filename="taskboard-export-20261126-120301.json"
+  {"exportedAt":"...","count":2,"tasks":[ ...全字段... ]}
+
+POST /api/tasks/import
+{"mode":"merge","tasks":[{"title":"...","status":"DOING","priority":"HIGH",...}]}
+{"mode":"replace","confirm":"replace","tasks":[ ... ]}
+→ 200 {"mode":"merge","imported":2,"skipped":1,"total":5}
+```
+
+- `merge` 全部追加、分配**新 id**；`replace` 在**单个事务**里清空任务与历史后导入，中途失败整体回滚。
+- `total` 是**导入完成后库内总数**。
+- 行内 `id` / `createdAt` / `updatedAt` / `overdue` / `daysOverdue` 一律忽略，重新生成 —— 导出文件可原样回灌。
+- **导入是恢复路径**，允许直接落到任意合法状态（含 `DONE`），不受交互状态机约束。
+- 逐条校验，**整行跳过**而不报 400：`title` 空白或超 80；`status` / `priority` 非法枚举；
+  `dueDate` 非法日期；`tags` 先归一化（trim/去重/去空）后超过 5 个或存在超过 20 字符的项；
+  `assignee` 超过 40 字符。
+- 请求级：`mode` 非法 → 400 `VALIDATION_FAILED`；`tasks` 缺失/非数组 → 400 `VALIDATION_FAILED`；
+  条数 >1000 → 400 `VALIDATION_FAILED`；`replace` 缺 `confirm:"replace"` → 400 `REPLACE_NOT_CONFIRMED`。
+
+**`replace` 为什么要 `confirm`**：清库是不可逆操作。前端的二次确认只活在前端，任何脚本、
+`curl` 调用或重放请求都能绕过它。要求 body 里显式带 `confirm` 是让「我要删光」成为调用方的
+声明，而不是服务端根据 `mode` 替它推断。
 
 ### 查询参数（`GET /api/tasks`）
 
@@ -215,7 +304,9 @@ java -jar target/taskboard-0.0.1-SNAPSHOT.jar --server.port=9090
 | 405 | `METHOD_NOT_ALLOWED` | 方法不支持（带 `Allow` 头） |
 | 406 | `NOT_ACCEPTABLE` | 客户端要求非 JSON 表示 |
 | 409 | `INVALID_TRANSITION` | 状态流转非法 |
+| 409 | `CONCURRENT_MODIFICATION` | 乐观锁冲突（并发改同一条任务，本次写入未生效） |
 | 415 | `UNSUPPORTED_MEDIA_TYPE` | `Content-Type` 不是 `application/json` |
+| 400 | `REPLACE_NOT_CONFIRMED` | `mode=replace` 但 body 缺 `confirm:"replace"` |
 | 500 | `INTERNAL_ERROR` | 未预期异常（不泄露堆栈） |
 
 ---
@@ -228,42 +319,62 @@ mvnw / mvnw.cmd / .mvn/            Maven wrapper，钉死 3.9.9
 src/main/java/com/example/taskboard/
   TaskboardApplication.java        入口 + Clock bean（时间可注入，便于测试）
   model/
-    Task.java                      领域对象 + isOverdue / isDueToday
+    Task.java                      领域 record + isOverdue / isDueToday（不随存储变更）
     TaskStatus.java                四态枚举 + canMoveTo 流转规则
     TaskPriority.java              四档优先级
+    TaskActivity.java              历史行的领域形态
+    TaskActivityType.java          CREATED / UPDATED / STATUS_CHANGED / DELETED
+  persistence/
+    TaskEntity.java                JPA 实体 + toDomain 映射；枚举按名存、tags EAGER+@OrderColumn、@Version
+    TaskActivityEntity.java        历史表；taskId 是普通列（无外键），删除后仍留存
+    TaskRepository.java            仅 CRUD + replace 用的清理查询
+    TaskActivityRepository.java    按 taskId 倒序取历史
   service/
-    TaskService.java               内存存储、增删改查、统计
+    TaskService.java               用例：增删改查、统计、历史、导入导出；归一化与状态机
+    TaskBatchService.java          批量逐条独立提交（每条独立事务）
     TaskQuery.java                 筛选 + 排序（含 null 截止日期处理）
     TaskStats.java                 统计聚合结果
     TaskNotFoundException.java     404
     InvalidTaskTransitionException.java  409
   web/
-    TaskController.java            7 个端点；/stats 声明在 /{id} 之前
+    TaskController.java            13 个端点；/stats、/export 声明在 /{id} 之前
     TaskPayload.java               新建/编辑入参 + 校验注解
     TaskResponse.java              出参；overdue 在此计算
     TaskStatsResponse.java         统计出参
     UpdateStatusRequest.java       改状态入参
+    TaskActivityResponse.java      历史出参
+    BatchRequest / BatchResponse / BatchResultItem   批量入参 / 出参 / 逐条结果
+    ImportRequest / ImportResponse / ExportResponse  导入导出
     ApiExceptionHandler.java       统一错误体，保留框架状态码
     JacksonStrictConfig.java       拒绝数字/布尔强转成字符串与枚举
     MalformedQueryException.java   查询参数非法 → 400
+    ValidationFailedException.java 请求级结构非法 → 400 VALIDATION_FAILED
+    ReplaceNotConfirmedException.java  replace 缺确认 → 400 REPLACE_NOT_CONFIRMED
 src/main/resources/
-  application.properties          端口 + 枚举严格模式
-  static/index.html               看板、筛选栏、统计条、编辑弹窗
-  static/app.js                   请求封装、渲染、拖拽、筛选、弹窗
+  application.properties          端口 + 枚举严格模式 + H2 文件库 + open-in-view=false
+  static/index.html               看板、筛选栏、统计条、编辑弹窗、批量栏、导入弹窗
+  static/app.js                   请求封装、渲染、拖拽、筛选、弹窗、活动流、批量、导入导出
   static/style.css                四列看板与卡片样式
-src/test/java/com/example/taskboard/
-  TaskApiTest.java                35 个 MockMvc 用例（含 406/415/405/409 回归）
-  service/TaskServiceTest.java    24 个服务层用例（含 4x4 流转矩阵）
-  support/MutableClock.java       可推进的测试时钟
+src/test/
+  resources/application.properties  测试用 H2 内存库（create-drop），永不碰 ./data
+  java/com/example/taskboard/
+    TaskApiTest.java                    35 个既有契约用例（随机顺序跑）
+    TaskFeatureApiTest.java             24 个新能力用例
+    ConcurrentModificationTest.java     2 个并发冲突用例
+    service/TaskServiceTest.java        24 个服务层用例（含 4x4 流转矩阵）
+    support/MutableClock.java           可推进/可重置的测试时钟
+    support/StoreReset.java             清库 + 重置自增（H2 自增非事务性）
 ```
 
-三条设计要点：
+四条设计要点：
 
 1. **状态机只有一个实现**，在 `TaskStatus.canMoveTo`。服务端与前端各自判断，但规则来源唯一。
 2. **错误处理只有一条出口**，`ApiExceptionHandler` 把所有异常收成药丸状 JSON，并保留 Spring
    自己算出来的状态码与响应头（405 的 `Allow`、406 的 JSON 兜底都在这里）。
 3. **前端三态 + 请求编号**：加载中/空/失败互斥渲染；每次列表请求带递增编号，旧响应回来
    直接丢弃，避免快速筛选时后到的旧数据覆盖新数据。
+4. **领域对象与存储分离**：`Task` record 不认识 JPA，`TaskEntity` 不认识业务规则。过滤、排序、
+   统计仍在内存里对领域对象做（`TaskQuery`），没有把 id tie-break 和 nullsLast 移植成第二套 JPQL。
 
 ---
 
@@ -271,9 +382,11 @@ src/test/java/com/example/taskboard/
 
 ```
 $ ./mvnw -B test
+[INFO] Tests run: 24, Failures: 0, Errors: 0, Skipped: 0 -- TaskFeatureApiTest
+[INFO] Tests run: 2,  Failures: 0, Errors: 0, Skipped: 0 -- ConcurrentModificationTest
 [INFO] Tests run: 24, Failures: 0, Errors: 0, Skipped: 0 -- TaskServiceTest
 [INFO] Tests run: 35, Failures: 0, Errors: 0, Skipped: 0 -- TaskApiTest
-[INFO] Tests run: 59, Failures: 0, Errors: 0, Skipped: 0
+[INFO] Tests run: 85, Failures: 0, Errors: 0, Skipped: 0
 [INFO] BUILD SUCCESS
 ```
 
@@ -281,8 +394,16 @@ $ ./mvnw -B test
 另有 `TODO→DONE`、`BLOCKED→DONE` 跳步、`DONE` 终态、幂等空操作、失败不改状态等独立用例；
 以及排序（优先级序、截止日期 null 排最后）、筛选组合、逾期与今日到期边界、标签去重、统计聚合。
 
-`TaskApiTest` 用 `@TestMethodOrder(Random)` 跑，并在 `@BeforeEach` 清空存储 —— 只有在这种
-随机顺序下仍然全绿，才说明用例之间真的隔离。
+`TaskApiTest` 与 `TaskFeatureApiTest` 都用 `@TestMethodOrder(Random)` 跑，并在 `@BeforeEach`
+清库且**重置自增序列** —— H2 的自增不随事务回滚，不重置的话断言 `id == 1` 只会通过一次。
+只有在这种随机顺序下仍然全绿，才说明用例之间真的隔离。
+
+接口层除正常路径外，专门钉住了几个容易回归的地方：
+`Accept: text/html` 不能退化成 Whitelabel 页面、405 必须带 `Allow`、415 不能被压成 400、
+数字形式的枚举 ordinal 必须被拒、非法查询参数不能变成 500。
+
+新能力另补的防失真断言：同状态 PATCH 后 `updatedAt` 不变、`Instant` 线格式是 ISO-8601 UTC 形状、
+枚举确实按名落库（直接读原生列）、tags 顺序列保序、清空 tags 会真的删掉子行。
 
 接口层除正常路径外，专门钉住了几个容易回归的地方：
 `Accept: text/html` 不能退化成 Whitelabel 页面、405 必须带 `Allow`、415 不能被压成 400、
@@ -328,19 +449,23 @@ $ ./mvnw -B test
 
 这是**样例**，不是生产组件。以下是刻意的取舍，不是遗漏：
 
-- **数据在内存里**：重启即丢，无法多实例部署，也没有持久化与迁移。
-- **没有并发控制**：两个标签页同时编辑同一任务，后保存的覆盖先保存的，`updatedAt` 无法
-  判断谁更新。演示场景可以接受，真实场景需要 `ETag` / `If-Match`。
+- **单实例本地部署**：H2 文件库同一时刻只允许一个进程持有，不能多实例水平扩展。
+- **环境变量没有鉴权**：任何能访问端口的人都能改所有任务，也能触发 `replace` 清库。
+  `confirm:"replace"` 防的是「误调用」，不是「恶意调用」。
+- **没有登录与权限**：同上，见上一条。
+- **乐观锁只到 409**：冲突时本次写入不生效并返回 `CONCURRENT_MODIFICATION`，服务端不自动重试，
+  需要调用方重读后再写。演示场景够用；需要「自动合并」就得引入真正的冲突策略。
+- **`ddl-auto=update`**：适合本地与演示，不做版本化迁移。结构演进到需要回滚/审计的规模时，
+  应换成 Flyway/Liquibase 这类迁移工具。
 - **允许创建已过期的截止日期**：新建时也不拦。因为编辑一条本来就已经逾期的任务时，
   「逾期」是一个**状态**而不是**非法输入**；拦了既会把正常编辑变成无法保存，也和「逾期数」统计
   自相矛盾。逾期改为在界面上标红提示。
-- **最后写入者胜出**：`PUT` / `PATCH` 都不带版本号，没有 `ETag` / `If-Match`。演示时
-  **不要双开标签页编辑同一条任务**，后保存的会覆盖先保存的且无法察觉。
 - **两个统计口径不同**：`GET /api/tasks/stats` 是全局（不受筛选影响），顶部统计条是按筛选结果
   在前端算的。这是刻意的 —— 演示时需要「筛出来多少」和「总共有多少」同时可见。
 - **`overdue` 只做正向筛选**：`?overdue=true` 才筛；`false` 与不传等价。因为逾期只对
   未完成任务有意义，`DONE` 任务即便截止日期已过也不算逾期。
-- **没有登录与权限**：任何能访问端口的人都能改所有任务。
+- **历史只记「变了什么」，不记「谁改的」**：没有登录体系，就没有可信的操作人。
+  接入认证后应给 `task_activities` 增加 `actor` 列。
 - **拖拽依赖 HTML5 原生 API**：桌面浏览器体验完整；移动端浏览器普遍不支持 HTML5 拖拽，
   所以每张卡片都保留了按钮操作作为等价入口。
 
@@ -352,6 +477,26 @@ $ ./mvnw -B test
 ./mvnw -B test                              # 全量测试
 ./mvnw -B package -DskipTests               # 打包
 java -jar target/taskboard-0.0.1-SNAPSHOT.jar --server.port=9090
+```
+
+### 启停要按 PID 精确控制
+
+```bash
+# 启动并记录真实 JVM 的 PID
+java -jar target/taskboard-0.0.1-SNAPSHOT.jar > /tmp/taskboard.log 2>&1 &
+echo $! > /tmp/taskboard.pid
+
+# 停止：只杀这个 PID，等 5 秒不退再 kill -9 同一个 PID
+kill "$(cat /tmp/taskboard.pid)"
+```
+
+**不要用 `lsof -ti:8080 | xargs kill` 或任何按端口/按进程名批量杀。** `lsof -ti:<port>` 匹配的是
+所有本地端口等于该值的套接字，**包含出站连接** —— macOS 上企业微信、微信会大量使用 8080 作出站
+远端端口，这条命令会连它们一起杀掉，而且往往连自己的服务都没杀到（如果它已退出）。
+只想查端口占用请用只读命令：
+
+```bash
+lsof -nP -iTCP:8080 -sTCP:LISTEN   # 必须带 -sTCP:LISTEN
 ```
 
 前端是裸 JS，没有构建步骤，改完 `src/main/resources/static/` 下的文件重启即可生效

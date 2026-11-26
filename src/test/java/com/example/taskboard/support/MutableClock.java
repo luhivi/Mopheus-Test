@@ -5,15 +5,23 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
 
-/** Lets a test move time forward without sleeping. */
+/**
+ * Lets a test move time forward without sleeping, and pin it again between methods. Tests share
+ * one instance because the service is now a real Spring bean; without {@link #reset} the second
+ * test would inherit the first one's advanced clock.
+ */
 public final class MutableClock extends Clock {
 
-    private Instant current;
+    private volatile Instant current;
     private final ZoneId zone;
 
     public MutableClock(Instant start, ZoneId zone) {
         this.current = start;
         this.zone = zone;
+    }
+
+    public void reset(Instant instant) {
+        this.current = instant;
     }
 
     public void advance(Duration amount) {
