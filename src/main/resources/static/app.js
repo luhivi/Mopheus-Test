@@ -3,6 +3,11 @@
 const API_BASE = '/api/tasks';
 const REQUEST_TIMEOUT_MS = 8000;
 const STATUS_LABELS = { TODO: '待办', DOING: '进行中', BLOCKED: '阻塞', DONE: '已完成' };
+const PRIORITY_LABELS = { LOW: '低', NORMAL: '普通', HIGH: '高', URGENT: '紧急' };
+// Mirrors the backend TaskActivity type enum (CREATED / UPDATED / STATUS_CHANGED / DELETED).
+const ACTIVITY_TYPE_LABELS = { CREATED: '创建', UPDATED: '更新', STATUS_CHANGED: '状态', DELETED: '删除' };
+// Mirrors the import row cap the server enforces; checked up front to fail fast without a round trip.
+const IMPORT_MAX_ROWS = 1000;
 // Mirrors TaskStatus.ALLOWED on the server. Written out rather than derived so a drift is
 // visible in review. The server side is pinned by transitionTableMatchesTheDocumentedMatrix;
 // this copy is not, so a change to the table must be made in both places.
@@ -33,6 +38,14 @@ let latestLoadId = 0;
 let tasks = [];
 let filters = { q: '', status: '', priority: '', overdue: false, sort: 'createdAt', order: 'desc' };
 
+// Batch selection survives re-renders (loadTasks rebuilds every card) and filters: hiding a task
+// must not silently drop it from the selection, so the set is pruned only when tasks really go away.
+let selectedIds = new Set();
+let batchBusy = false;
+let pendingImport = null;
+let activityRequestId = 0;
+let detailTaskId = null;
+
 const els = {
     statTotal: document.getElementById('stat-total'),
     statTodo: document.getElementById('stat-todo'),
@@ -56,6 +69,38 @@ const els = {
     sortKey: document.getElementById('sort-key'),
     sortOrder: document.getElementById('sort-order'),
     filterReset: document.getElementById('filter-reset'),
+
+    exportButton: document.getElementById('export-button'),
+    importButton: document.getElementById('import-button'),
+    importFile: document.getElementById('import-file'),
+
+    batchBar: document.getElementById('batch-bar'),
+    batchCount: document.getElementById('batch-count'),
+    batchSelectAll: document.getElementById('batch-select-all'),
+    batchClear: document.getElementById('batch-clear'),
+    batchTarget: document.getElementById('batch-target'),
+    batchApply: document.getElementById('batch-apply'),
+    batchDelete: document.getElementById('batch-delete'),
+    batchResults: document.getElementById('batch-results'),
+    batchSummary: document.getElementById('batch-summary'),
+    batchFailures: document.getElementById('batch-failures'),
+    batchResultsClose: document.getElementById('batch-results-close'),
+
+    detailDialog: document.getElementById('detail-dialog'),
+    detailTitle: document.getElementById('detail-title'),
+    detailMeta: document.getElementById('detail-meta'),
+    activitiesState: document.getElementById('activities-state'),
+    activitiesList: document.getElementById('activities-list'),
+    activityRetry: document.getElementById('activity-retry'),
+    detailClose: document.getElementById('detail-close'),
+
+    importDialog: document.getElementById('import-dialog'),
+    importForm: document.getElementById('import-form'),
+    importFileName: document.getElementById('import-file-name'),
+    importWarning: document.getElementById('import-warning'),
+    importHint: document.getElementById('import-hint'),
+    importCancel: document.getElementById('import-cancel'),
+    importSubmit: document.getElementById('import-submit'),
 
     loading: document.getElementById('state-loading'),
     empty: document.getElementById('state-empty'),
@@ -99,6 +144,15 @@ function setFormHint(text, tone) {
     }
 }
 
+function setImportHint(text, tone) {
+    els.importHint.textContent = text;
+    if (tone) {
+        els.importHint.dataset.tone = tone;
+    } else {
+        delete els.importHint.dataset.tone;
+    }
+}
+
 /* ------------------------------------------------------------------ network */
 
 async function request(url, options) {
@@ -119,6 +173,14 @@ async function request(url, options) {
 
     if (response.status === 204) {
         return null;
+    }
+
+    // Blob mode is for file downloads (export): the JSON error body above still applies, a
+    // success resolves to the raw bytes plus the Content-Disposition header so the caller can
+    // keep the server-chosen filename.
+    if (options && options.blob && response.ok) {
+        const blob = await response.blob();
+        return { blob, disposition: response.headers.get('Content-Disposition') };
     }
 
     let payload = null;
@@ -303,6 +365,10 @@ function renderCard(task) {
         advance.title = `改为「${STATUS_LABELS[action.to]}」`;
     }
 
+    const check = node.querySelector('.card__check');
+    check.checked = selectedIds.has(task.id);
+    check.setAttribute('aria-label', `选择「${task.title}」`);
+
     return node;
 }
 
@@ -322,6 +388,7 @@ async function loadTasks() {
         tasks = Array.isArray(data) ? data : [];
         renderStats();
         renderBoard();
+        updateBatchBar();
         writeFiltersToHash();
     } catch (error) {
         if (requestId !== latestLoadId) {
@@ -414,6 +481,8 @@ async function deleteTask(card, task) {
     setCardBusy(card, true);
     try {
         await request(`${API_BASE}/${encodeURIComponent(task.id)}`, { method: 'DELETE' });
+        selectedIds.delete(task.id);
+        updateBatchBar();
         await loadTasks();
         setHint('已删除。');
     } catch (error) {
@@ -626,6 +695,392 @@ async function submitForm(event) {
     }
 }
 
+/* --------------------------------------------------------------------- batch */
+
+// A batch response is 200 even when half the rows failed, so the HTTP status says nothing about
+// the outcome: success/failure counts may only come from parsing `results` item by item.
+function summarizeBatchResults(label, data) {
+    if (!data || !Array.isArray(data.results)) {
+        setHint(`${label}：响应缺少 results 数组，请刷新后重试。`, 'error');
+        return;
+    }
+    const results = data.results;
+    let okCount = 0;
+    const failures = [];
+    for (const item of results) {
+        if (item && item.ok === true) {
+            okCount += 1;
+        } else {
+            failures.push(item);
+        }
+    }
+
+    const summary = `${label}：成功 ${okCount} 条 / 失败 ${failures.length} 条`;
+    els.batchSummary.textContent = summary;
+    if (failures.length > 0) {
+        els.batchSummary.dataset.tone = 'error';
+    } else {
+        delete els.batchSummary.dataset.tone;
+    }
+
+    els.batchFailures.replaceChildren();
+    for (const item of failures) {
+        const li = document.createElement('li');
+        li.className = 'batch-results__item';
+        const id = item && item.id !== undefined ? `#${item.id}` : '#?';
+        const code = item && item.code ? item.code : 'UNKNOWN';
+        const message = item && typeof item.message === 'string' ? item.message : '无错误信息';
+        li.textContent = `${id} · ${code} · ${message}`;
+        els.batchFailures.appendChild(li);
+    }
+    els.batchResults.hidden = false;
+
+    setHint(summary, failures.length > 0 ? 'error' : undefined);
+    return failures.length;
+}
+
+function setBatchBusy(busy) {
+    batchBusy = busy;
+    if (busy) {
+        els.batchBar.setAttribute('aria-busy', 'true');
+    } else {
+        els.batchBar.removeAttribute('aria-busy');
+    }
+    updateBatchBar();
+}
+
+function updateBatchBar() {
+    const count = selectedIds.size;
+    els.batchBar.hidden = count === 0;
+    els.batchCount.textContent = `已选 ${count} / 共 ${tasks.length} 条`;
+
+    els.batchSelectAll.disabled = batchBusy || tasks.length === 0;
+    els.batchClear.disabled = batchBusy || count === 0;
+    els.batchTarget.disabled = batchBusy || count === 0;
+    els.batchApply.disabled = batchBusy || count === 0;
+    els.batchDelete.disabled = batchBusy || count === 0;
+    els.batchResultsClose.disabled = batchBusy;
+}
+
+async function runBatchStatus() {
+    const ids = [...selectedIds];
+    const status = els.batchTarget.value;
+    if (ids.length === 0 || batchBusy || !STATUS_LABELS[status]) {
+        return;
+    }
+    setBatchBusy(true);
+    setHint('正在批量推进…');
+    try {
+        const data = await request(`${API_BASE}/batch-status`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+            body: JSON.stringify({ ids, status }),
+        });
+        summarizeBatchResults(`批量推进到「${STATUS_LABELS[status]}」`, data);
+        selectedIds.clear();
+        updateBatchBar();
+        await loadTasks();
+    } catch (error) {
+        setHint(`批量推进失败：${error.message}`, 'error');
+    } finally {
+        setBatchBusy(false);
+    }
+}
+
+async function runBatchDelete() {
+    const ids = [...selectedIds];
+    if (ids.length === 0 || batchBusy) {
+        return;
+    }
+    if (!window.confirm(`确定删除所选的 ${ids.length} 个任务？此操作不可恢复。`)) {
+        return;
+    }
+    setBatchBusy(true);
+    setHint('正在批量删除…');
+    try {
+        const data = await request(`${API_BASE}/batch-delete`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+            body: JSON.stringify({ ids }),
+        });
+        summarizeBatchResults('批量删除', data);
+        selectedIds.clear();
+        updateBatchBar();
+        await loadTasks();
+    } catch (error) {
+        setHint(`批量删除失败：${error.message}`, 'error');
+    } finally {
+        setBatchBusy(false);
+    }
+}
+
+/* --------------------------------------------------------------------- detail */
+
+function formatDateTime(iso) {
+    const date = new Date(iso);
+    if (Number.isNaN(date.getTime())) {
+        return '—';
+    }
+    return date.toLocaleString('zh-CN', { hour12: false });
+}
+
+function relativeTime(iso) {
+    const time = new Date(iso).getTime();
+    if (Number.isNaN(time)) {
+        return '';
+    }
+    const diff = Date.now() - time;
+    if (diff < 60000) {
+        return '刚刚';
+    }
+    const minutes = Math.floor(diff / 60000);
+    if (minutes < 60) {
+        return `${minutes} 分钟前`;
+    }
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) {
+        return `${hours} 小时前`;
+    }
+    const days = Math.floor(hours / 24);
+    if (days < 7) {
+        return `${days} 天前`;
+    }
+    return formatDateTime(iso);
+}
+
+function renderDetailMeta(task) {
+    const rows = [
+        ['状态', STATUS_LABELS[task.status] || task.status],
+        ['优先级', PRIORITY_LABELS[task.priority] || task.priority],
+        ['负责人', task.assignee || '—'],
+        ['截止日期', task.dueDate
+            ? (task.overdue ? `${task.dueDate}（已逾期 ${task.daysOverdue} 天）` : task.dueDate)
+            : '—'],
+        ['标签', Array.isArray(task.tags) && task.tags.length > 0 ? task.tags.join('、') : '—'],
+        ['创建时间', formatDateTime(task.createdAt)],
+        ['更新时间', formatDateTime(task.updatedAt)],
+    ];
+
+    els.detailMeta.replaceChildren();
+    for (const [label, value] of rows) {
+        const dt = document.createElement('dt');
+        dt.textContent = label;
+        const dd = document.createElement('dd');
+        dd.textContent = value;
+        els.detailMeta.appendChild(dt);
+        els.detailMeta.appendChild(dd);
+    }
+}
+
+function showActivityState(text, tone) {
+    els.activitiesState.textContent = text;
+    if (tone) {
+        els.activitiesState.dataset.tone = tone;
+    } else {
+        delete els.activitiesState.dataset.tone;
+    }
+    els.activitiesList.replaceChildren();
+    els.activityRetry.hidden = tone !== 'error';
+}
+
+function renderActivities(activities) {
+    if (activities.length === 0) {
+        showActivityState('暂无活动记录。');
+        return;
+    }
+    showActivityState('');
+    for (const activity of activities) {
+        const li = document.createElement('li');
+        li.className = 'activity';
+        if (activity.type === 'DELETED') {
+            li.classList.add('activity--deleted');
+        }
+
+        const badge = document.createElement('span');
+        badge.className = 'activity__type';
+        badge.dataset.type = activity.type;
+        badge.textContent = ACTIVITY_TYPE_LABELS[activity.type] || activity.type;
+
+        const body = document.createElement('div');
+        body.className = 'activity__body';
+        const detail = document.createElement('p');
+        detail.className = 'activity__detail';
+        detail.textContent = typeof activity.detail === 'string' && activity.detail.length > 0
+            ? activity.detail
+            : '—';
+        const time = document.createElement('time');
+        time.className = 'activity__time';
+        if (activity.createdAt) {
+            time.setAttribute('datetime', activity.createdAt);
+        }
+        time.textContent = relativeTime(activity.createdAt);
+
+        body.appendChild(detail);
+        body.appendChild(time);
+        li.appendChild(badge);
+        li.appendChild(body);
+        els.activitiesList.appendChild(li);
+    }
+}
+
+async function loadActivities(taskId) {
+    const requestId = ++activityRequestId;
+    showActivityState('正在加载活动记录…');
+    try {
+        const data = await request(`${API_BASE}/${encodeURIComponent(taskId)}/activities?limit=50`, {
+            headers: { Accept: 'application/json' },
+        });
+        if (requestId !== activityRequestId) {
+            return;
+        }
+        renderActivities(Array.isArray(data) ? data : []);
+    } catch (error) {
+        if (requestId !== activityRequestId) {
+            return;
+        }
+        showActivityState(`活动记录加载失败：${error.message}`, 'error');
+    }
+}
+
+function openDetailDialog(task) {
+    detailTaskId = task.id;
+    els.detailTitle.textContent = task.title;
+    renderDetailMeta(task);
+    showActivityState('正在加载活动记录…');
+    els.detailDialog.showModal();
+    loadActivities(task.id);
+}
+
+/* --------------------------------------------------------------- import/export */
+
+function exportFilenameFallback() {
+    const now = new Date();
+    const pad = (value) => String(value).padStart(2, '0');
+    const date = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}`;
+    const time = `${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+    return `taskboard-export-${date}-${time}.json`;
+}
+
+function filenameFromDisposition(header) {
+    if (typeof header !== 'string') {
+        return null;
+    }
+    const match = header.match(/filename="?([^";]+)"?/i);
+    return match ? match[1].trim() : null;
+}
+
+async function exportTasks() {
+    if (els.exportButton.disabled) {
+        return;
+    }
+    els.exportButton.disabled = true;
+    els.exportButton.setAttribute('aria-busy', 'true');
+    setHint('正在导出…');
+    try {
+        const { blob, disposition } = await request(`${API_BASE}/export`, { blob: true });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = filenameFromDisposition(disposition) || exportFilenameFallback();
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+        setHint(`已导出 ${link.download}。`);
+    } catch (error) {
+        setHint(`导出失败：${error.message}`, 'error');
+    } finally {
+        els.exportButton.disabled = false;
+        els.exportButton.removeAttribute('aria-busy');
+    }
+}
+
+function openImportDialog(fileName, rows) {
+    pendingImport = { fileName, rows };
+    els.importFileName.textContent = `文件：${fileName} · ${rows.length} 条任务`;
+    els.importForm.reset();
+    els.importWarning.hidden = true;
+    setImportHint('');
+    els.importDialog.showModal();
+}
+
+async function handleImportFileChosen() {
+    const file = els.importFile.files && els.importFile.files[0];
+    els.importFile.value = '';
+    if (!file) {
+        return;
+    }
+    let parsed;
+    try {
+        parsed = JSON.parse(await file.text());
+    } catch (error) {
+        setHint('导入失败：文件不是有效的 JSON。', 'error');
+        return;
+    }
+    const rows = Array.isArray(parsed)
+        ? parsed
+        : (parsed && Array.isArray(parsed.tasks) ? parsed.tasks : null);
+    if (!rows) {
+        setHint('导入失败：文件缺少 tasks 数组，不是本看板的导出格式。', 'error');
+        return;
+    }
+    if (rows.length > IMPORT_MAX_ROWS) {
+        setHint(`导入失败：单次最多 ${IMPORT_MAX_ROWS} 条，文件中有 ${rows.length} 条。`, 'error');
+        return;
+    }
+    openImportDialog(file.name, rows);
+}
+
+async function submitImport(event) {
+    event.preventDefault();
+    if (!pendingImport || els.importSubmit.disabled) {
+        return;
+    }
+    const mode = els.importForm.elements['import-mode'].value;
+    if (mode !== 'merge' && mode !== 'replace') {
+        return;
+    }
+    if (mode === 'replace' && !window.confirm('替换模式将清空现有全部任务且不可恢复，确定继续？')) {
+        return;
+    }
+
+    const body = { mode, tasks: pendingImport.rows };
+    if (mode === 'replace') {
+        body.confirm = 'replace';
+    }
+
+    els.importSubmit.disabled = true;
+    els.importSubmit.setAttribute('aria-busy', 'true');
+    setImportHint('正在导入…');
+    try {
+        const data = await request(`${API_BASE}/import`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+            body: JSON.stringify(body),
+        });
+        els.importDialog.close();
+        pendingImport = null;
+        const imported = data && typeof data.imported === 'number' ? data.imported : 0;
+        const skipped = data && typeof data.skipped === 'number' ? data.skipped : 0;
+        const total = data && typeof data.total === 'number' ? data.total : null;
+        let message = `导入完成：导入 ${imported} 条、跳过 ${skipped} 条`;
+        if (total !== null) {
+            message += `，库内现共 ${total} 条任务`;
+        }
+        message += '。';
+        if (skipped > 0) {
+            message += '部分行未通过校验被跳过。';
+        }
+        setHint(message, skipped > 0 ? 'error' : undefined);
+        await loadTasks();
+    } catch (error) {
+        setImportHint(`导入失败：${error.message}`, 'error');
+    } finally {
+        els.importSubmit.disabled = false;
+        els.importSubmit.removeAttribute('aria-busy');
+    }
+}
+
 /* -------------------------------------------------------------------- seed */
 
 // Sample data so an empty instance still shows what the board can do. Only used when the server
@@ -746,6 +1201,82 @@ els.board.addEventListener('click', (event) => {
         deleteTask(card, task);
     } else if (action === 'edit') {
         openDialogForEdit(task);
+    } else if (action === 'detail') {
+        openDetailDialog(task);
+    }
+});
+
+els.board.addEventListener('change', (event) => {
+    const input = event.target.closest('input[data-action="select"]');
+    if (!input) {
+        return;
+    }
+    const card = input.closest('.card');
+    if (!card) {
+        return;
+    }
+    const id = Number(card.dataset.id);
+    if (!Number.isFinite(id)) {
+        return;
+    }
+    if (input.checked) {
+        selectedIds.add(id);
+    } else {
+        selectedIds.delete(id);
+    }
+    updateBatchBar();
+});
+
+els.batchSelectAll.addEventListener('click', () => {
+    for (const task of tasks) {
+        selectedIds.add(task.id);
+    }
+    document.querySelectorAll('.card').forEach((card) => {
+        const check = card.querySelector('.card__check');
+        if (check) {
+            check.checked = selectedIds.has(Number(card.dataset.id));
+        }
+    });
+    updateBatchBar();
+});
+
+els.batchClear.addEventListener('click', () => {
+    selectedIds.clear();
+    document.querySelectorAll('.card__check').forEach((check) => {
+        check.checked = false;
+    });
+    updateBatchBar();
+});
+
+els.batchApply.addEventListener('click', runBatchStatus);
+els.batchDelete.addEventListener('click', runBatchDelete);
+els.batchResultsClose.addEventListener('click', () => {
+    els.batchResults.hidden = true;
+});
+
+els.exportButton.addEventListener('click', exportTasks);
+els.importButton.addEventListener('click', () => els.importFile.click());
+els.importFile.addEventListener('change', () => handleImportFileChosen());
+els.importForm.addEventListener('change', (event) => {
+    if (event.target && event.target.name === 'import-mode') {
+        els.importWarning.hidden = event.target.value !== 'replace';
+    }
+});
+els.importForm.addEventListener('submit', submitImport);
+els.importCancel.addEventListener('click', () => {
+    pendingImport = null;
+    els.importDialog.close();
+});
+els.detailClose.addEventListener('click', () => els.detailDialog.close());
+els.detailDialog.addEventListener('close', () => {
+    detailTaskId = null;
+    // Invalidate in-flight activity loads so a late response never lands in a reopened dialog
+    // for a different task.
+    activityRequestId += 1;
+});
+els.activityRetry.addEventListener('click', () => {
+    if (detailTaskId !== null) {
+        loadActivities(detailTaskId);
     }
 });
 

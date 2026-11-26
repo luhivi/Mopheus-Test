@@ -204,6 +204,95 @@ body {
     color: inherit;
 }
 
+.toolbar__ops {
+    display: flex;
+    gap: 8px;
+    margin-left: auto;
+    padding-bottom: 8px;
+}
+
+/* ---------------------------------------------------------------- batch bar */
+
+.batch-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 12px;
+    align-items: center;
+    padding: 10px 12px;
+    margin-bottom: 8px;
+    background: var(--accent-soft);
+    border: 1px solid var(--accent);
+    border-radius: var(--radius);
+}
+
+.batch-bar__count {
+    font-size: 13px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+}
+
+.batch-bar__advance {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.batch-bar__label {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--muted);
+}
+
+.batch-bar__advance .field__control {
+    padding: 5px 8px;
+    font-size: 13px;
+}
+
+.batch-results {
+    margin-bottom: 8px;
+    padding: 10px 12px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+}
+
+.batch-results__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.batch-results__summary {
+    margin: 0;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.batch-results__summary[data-tone="error"] {
+    color: var(--danger);
+}
+
+.batch-results__list {
+    max-height: 180px;
+    margin: 8px 0 0;
+    padding: 0;
+    list-style: none;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.batch-results__item {
+    padding: 4px 8px;
+    border-radius: 6px;
+    background: var(--danger-soft);
+    color: var(--danger);
+    font-size: 12px;
+    overflow-wrap: anywhere;
+}
+
 /* --------------------------------------------------------------- states */
 
 .state {
@@ -397,6 +486,19 @@ body {
     display: flex;
     gap: 6px;
     justify-content: flex-end;
+    align-items: center;
+}
+
+.card__check {
+    margin-right: auto;
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+}
+
+.card__check:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
 }
 
 /* ----------------------------------------------------------------- buttons */
@@ -493,4 +595,160 @@ body {
     justify-content: flex-end;
     gap: 8px;
     margin-top: 4px;
+}
+
+/* ------------------------------------------------------------ detail dialog */
+
+.detail-meta {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 4px 16px;
+    margin: 0;
+    font-size: 13px;
+}
+
+.detail-meta dt {
+    color: var(--muted);
+}
+
+.detail-meta dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+}
+
+.activities {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+}
+
+.activities__title {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 700;
+}
+
+.activities__state {
+    margin: 0;
+    font-size: 13px;
+    color: var(--muted);
+}
+
+.activities__state[data-tone="error"] {
+    color: var(--danger);
+}
+
+.activities__state:empty {
+    display: none;
+}
+
+.activities__list {
+    max-height: 240px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.activity {
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+}
+
+.activity--deleted .activity__detail {
+    color: var(--muted);
+}
+
+.activity__type {
+    flex: none;
+    padding: 1px 8px;
+    border-radius: 999px;
+    border: 1px solid transparent;
+    font-size: 11px;
+    font-weight: 600;
+    background: var(--surface-muted);
+    color: var(--muted);
+}
+
+.activity__type[data-type="CREATED"] {
+    background: var(--ok-soft);
+    color: var(--ok);
+}
+
+.activity__type[data-type="UPDATED"] {
+    background: var(--accent-soft);
+    color: var(--accent);
+}
+
+.activity__type[data-type="STATUS_CHANGED"] {
+    background: var(--warn-soft);
+    color: var(--warn);
+}
+
+/* The task itself is gone; the row survives only as an audit trail, so it reads as muted danger. */
+.activity__type[data-type="DELETED"] {
+    background: var(--danger-soft);
+    color: var(--danger);
+}
+
+.activity__body {
+    min-width: 0;
+}
+
+.activity__detail {
+    margin: 0;
+    font-size: 13px;
+    overflow-wrap: anywhere;
+}
+
+.activity__time {
+    display: block;
+    font-size: 11px;
+    color: var(--muted);
+}
+
+/* ------------------------------------------------------------ import dialog */
+
+.import-file {
+    margin: 0;
+    font-size: 13px;
+    color: var(--muted);
+    overflow-wrap: anywhere;
+}
+
+.import-modes {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+}
+
+.import-modes legend {
+    padding: 0;
+}
+
+.import-mode {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+}
+
+.import-warning {
+    margin: 0;
+    padding: 8px 10px;
+    background: var(--danger-soft);
+    border: 1px solid #ecc4bd;
+    border-radius: 8px;
+    color: var(--danger);
+    font-size: 13px;
+    font-weight: 600;
 }
