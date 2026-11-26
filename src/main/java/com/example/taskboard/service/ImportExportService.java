@@ -7,6 +7,7 @@ import com.example.taskboard.web.ImportTaskPayload;
 import com.example.taskboard.web.TaskResponse;
 import com.example.taskboard.web.ReplaceNotConfirmedException;
 import com.example.taskboard.web.ValidationFailedException;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Service;
@@ -145,9 +146,10 @@ public class ImportExportService {
         ImportTaskPayload payload;
         try {
             payload = objectMapper.treeToValue(row, ImportTaskPayload.class);
-        } catch (Exception ex) {
+        } catch (JsonProcessingException ex) {
             // A row whose JSON types do not match the payload shape is a skipped row, not a
-            // failed request: this is exactly the "逐条校验" rule.
+            // failed request: this is exactly the "逐条校验" rule. Catching Jackson's own
+            // exception type keeps a genuine bug elsewhere from being swallowed as "bad row".
             return null;
         }
         if (payload == null) {

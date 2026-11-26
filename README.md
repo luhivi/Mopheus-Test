@@ -32,7 +32,7 @@
 | 构建 | Maven | 3.9.9 | 由仓库自带 `mvnw` 下载，无需全局安装 |
 | 持久化 | Spring Data JPA + Hibernate | 随 Boot | `spring-boot-starter-data-jpa` |
 | 数据库 | H2（file 模式） | 随 Boot BOM | 演示库落在 `./data/taskboard.mv.db`，已 gitignore |
-| 测试 | JUnit 5 + MockMvc | 随 Boot | 114 个用例（服务层 48 + 接口层 66） |
+| 测试 | JUnit 5 + MockMvc | 随 Boot | 116 个用例 |
 | 前端 | 原生 HTML5 / CSS3 / ES6+ | — | **不引入任何框架与构建链**，无 Node 依赖 |
 
 **只需要 JDK 17。** Maven 由 wrapper 自举，npm / node 完全不需要。
@@ -410,6 +410,7 @@ src/test/
     TaskActivityBatchApiTest.java 21 个活动流/批量/导出接口用例
     TaskImportExportApiTest.java  12 个导入导出用例（含导出文件原样回灌）
     TaskOptimisticLockTest.java    4 个乐观锁用例（老版本写入必须被拒）
+    ImportAtomicityTest.java       2 个事务用例（replace 失败必须回滚）
     service/TaskServiceTest.java  24 个服务层用例（含 4x4 流转矩阵）
     service/TaskActivityServiceTest.java  12 个活动抑制规则用例
     support/MutableClock.java     可推进的测试时钟
@@ -440,7 +441,8 @@ $ ./mvnw -B test
 [INFO] Tests run: 24, Failures: 0, Errors: 0, Skipped: 0 -- TaskServiceTest
 [INFO] Tests run: 4, Failures: 0, Errors: 0, Skipped: 0 -- TaskOptimisticLockTest
 [INFO] Tests run: 35, Failures: 0, Errors: 0, Skipped: 0 -- TaskApiTest
-[INFO] Tests run: 114, Failures: 0, Errors: 0, Skipped: 0
+[INFO] Tests run: 2, Failures: 0, Errors: 0, Skipped: 0 -- ImportAtomicityTest
+[INFO] Tests run: 116, Failures: 0, Errors: 0, Skipped: 0
 [INFO] BUILD SUCCESS
 ```
 
@@ -469,6 +471,10 @@ $ ./mvnw -B test
   `VALIDATION_FAILED`、`Content-Disposition` 文件名形状。
 - `TaskImportExportApiTest`：导出文件**原样回灌**、`replace` 原子、`confirm` 缺失、
   导入尊重 `status`、`tags` 归一化后再判 ≤5、坏行逐条 `skipped`。
+- `ImportAtomicityTest`：在清库之后**人为抛异常**，断言旧任务仍在 —— 注解写了不等于回滚，
+  这条用例是「replace 原子」这句话的唯一证据。
+- `TaskOptimisticLockTest`：制造一个过期版本的写请求，断言它拿到
+  `OptimisticLockingFailureException` 而不是覆盖别人刚提交的数据。
 
 两个**防失真断言**单独拎出来：`sameStatusPatchLogsNothingAndKeepsUpdatedAt` 直接比较两次
 GET 的 `updatedAt`；`createWritesOneCreatedActivity` 用正则断言 `createdAt` 是 ISO-8601 形状
